@@ -1,0 +1,1 @@
+- setup some common c code for later stuff
