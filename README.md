@@ -8,7 +8,7 @@ OneDayBuilds is a project to test a new approach to software engineering. namely
 4) One squashed commit is pushed at the end of the day.
 5) Code should take the minimum amount of files as necessary, preferrably one per day. E.g. 1 `.c`, `.h`, and `Makefile`
 7) Code is write once, read many. If updates are necessary to a previous day's project, copy it to the current day's directory and make the necessary changes.
-8) Code must import code from previous days in priortity of more recent days havin higher import priority.
+8) Code must import code from previous days in priority of more recent days having higher import priority.
 9) The day's solution should include some number of features, an end to end example, and a number of unit tests.
 
 ## why?
