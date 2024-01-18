@@ -15,6 +15,8 @@ int main(int argc, char** argv){
 
 	mcmc* mcmc = mcmc_new();
 	mcmc_train(mcmc, bytevec);
+	auto ret = mcmc_predict(mcmc,'a','b');
+	printf("%c\n",ret);
 
 	return 0;
 }

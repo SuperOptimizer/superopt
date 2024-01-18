@@ -1207,4 +1207,6 @@ typedef mat(128,128,f64) f64x128x128;
 	public name del_idx(name vec, s32 idx) {for(int i = idx; i < vec.len - 1; i++) vec.vec[i] = vec.vec[i+1]; vec.len--; return vec;} \
 	public name insert(name vec, s32 idx, T data){if(vec.len == vec.cap){vec.cap = vec.cap*3/2; vec.vec = realloc(vec.vec, vec.cap*sizeof(T));} vec.len++; for(int i = vec.len; i >= idx; i--){vec.vec[i] = vec.vec[i-1];} return vec;}
 
+
+
 VEC(u8, u8vec)
