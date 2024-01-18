@@ -18,5 +18,6 @@ add_compile_definitions(
 
 include_directories(./)
 
-add_executable(oneday main.c common.h  day/4/mcmc.c day/4/mcmc.h)
-add_executable(sopt day/5/sopt.c day/5/sopt.h)
+add_executable(mcmc src/mcmc.c src/mcmc.h)
+add_executable(sopt src/sopt.c src/sopt.h)
+add_executable(riscv src/riscv.c)

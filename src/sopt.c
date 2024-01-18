@@ -32,8 +32,11 @@ void gen(int max_tokens, int num_vars)
     // a program is an ast
 }
 
+int asdf(int a, int b, int c) {
+    return (((((!1)==b)?2:((!a)>>(~a)))>(((~1)+(2+1))|((~3)+c)))?(2/b):((((3|1)+(~2))<=((c|3)<<(2^3)))?((!a)*3):(((((~b)<<b)%c)>2)?((!b)>>2):((!2)|(a>>(b<<(1&3)))))));
+}
 
 int main(int argc, char** argv)
 {
-
+    printf("%d\n",asdf(5,6,7));
 }
