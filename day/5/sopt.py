@@ -6,7 +6,7 @@ logical_ops = ['&&','||']
 bit_ops = ['&','|','^','>>','<<']
 ternary_ops = ['?']
 
-ALL_BINOPS = arith_ops + cmp_ops + logical_ops + bit_ops
+MATH_BINOPS = arith_ops + bit_ops
 
 def gen_random(max_tokens, vars, constants):
     assert max_tokens > 0
@@ -16,8 +16,11 @@ def gen_random(max_tokens, vars, constants):
         op = random.choice(['~','!'])
         arg = random.choice(vars + constants)
         return '(' + op + arg + ')'
+    elif max_tokens >= 6 and random.randint(1,4) == 1:
+        op = random.choice(cmp_ops)
+
     elif max_tokens >= 3:
-        op = random.choice(ALL_BINOPS)
+        op = random.choice(MATH_BINOPS)
         lhs_size = random.randint(1,max_tokens-2)
         rhs_size = max_tokens - 1 - lhs_size
         lhs = gen_random(lhs_size,vars,constants)
@@ -35,11 +38,11 @@ def gen_exhaustive(max_tokens, vars, constants):
             for t in gen_exhaustive(1,vars,constants):
                 yield '(' + op + t + ')'
     if max_tokens >= 3:
-        for op in ALL_BINOPS:
+        for op in MATH_BINOPS:
             for x in range(1,max_tokens-1):
                 for lhs in gen_exhaustive(x,vars,constants):
                     for rhs in gen_exhaustive(max_tokens-1-x,vars,constants):
                         yield '(' + lhs + op + rhs + ')'
 
-print(gen_random(7,['a','b','c'], ['1','2','3']))
+print(gen_random(32,['a','b','c'], ['1','2','3']))
 
