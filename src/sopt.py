@@ -1,126 +1,94 @@
-import random
-import copy
+import tqdm
+import torch
+import torch.optim as optim
+from x_transformers import XTransformer
+import numpy as np
+import subprocess
+import tempfile
 
-arith_ops = ['+','-','*','/','%',]
-cmp_ops = ['==','!=','>','<','>=','<=']
-logical_ops = ['&&','||']
-bit_ops = ['&','|','^','>>','<<']
-ternary_ops = ['?']
+import generate_c
 
-MATH_BINOPS = arith_ops + bit_ops
+from pynvml import *
+nvmlInit()
 
-toplevel_stmts = ['funcdef', '='] #'structdef','uniondef','enumdef',
-embedded_stmts = ['for', 'while', '=', 'return'] #'goto'
+# constants
 
-#caller MUST add the var to global_vars
-def new_global(global_vars):
-  var = 'g_' + str(len(global_vars))
-  return var
+NUM_BATCHES = int(1e5)
+BATCH_SIZE = 1
+LEARNING_RATE = 3e-4
+GENERATE_EVERY  = 10
+NUM_TOKENS = 16 + 2
+ENC_SEQ_LEN = 64
+DEC_SEQ_LEN = 128 + 1
 
-#caller MUST add the var to local_vars
-def new_local(locals):
-  var = 'l_' + str(len(locals))
-  return var
+# helpers
 
-def new_func(funcs):
-  func = 'func_'+ str(len(funcs))
-  return func
+def cycle():
+  while True:
 
-def gen_random_stmts(num_stmts, constants, tabs, global_vars, local_vars):
-  depth = len(tabs)
-  if depth >= 5:
-    return []
-  if num_stmts == 0:
-    return []
-  stmts = []
+    prefix = torch.ones((BATCH_SIZE, 1)).long().cuda()
+    src = torch.randint(2, NUM_TOKENS, (BATCH_SIZE, ENC_SEQ_LEN)).long().cuda()
+    tgt = torch.cat((prefix, src, src), 1)
+    src_mask = torch.ones(BATCH_SIZE, src.shape[1]).bool().cuda()
+    yield (src, tgt, src_mask)
 
-  while num_stmts > 0:
-    if depth == 0:
-      stmt_type = random.choice(toplevel_stmts)
-      if stmt_type == '=':
-        lhs = new_global(global_vars)
-        rhs = gen_random_expr(16, global_vars+local_vars,constants)
-        stmt = f'__auto_type {lhs} = {rhs};'
-        global_vars.append(lhs)
-        stmts.append(stmt)
-        num_stmts -= 1
-      elif stmt_type == 'funcdef':
-        rettype = 'int' #todo: make better
-        params = []
-        for x in range(random.randint(1,4)):
-          params.append(new_local(params))
-        body = gen_random_stmts(num_stmts-1, constants,'\t', global_vars, copy.deepcopy(params))
-    else:
-      #we are in a function definition
-      stmt_type = random.choice(embedded_stmts)
-      if stmt_type == '=':
-        lhs = new_local(local_vars)
-        rhs = gen_random_expr(16, global_vars + local_vars, constants)
-        local_vars.append(lhs)
-        stmt = f'{tabs}__auto_type {lhs} = {rhs};'
-      elif stmt_type == 'while':
-        cmp_op = random.choice(cmp_ops)
-        cmp_lhs = gen_random_expr(8, global_vars + local_vars, constants)
-        cmp_rhs = gen_random_expr(8, global_vars + local_vars, constants)
-        body = gen_random_stmts(num_stmts-1,constants, tabs + '\t',global_vars, local_vars)
-        body_str = '\n'.join(body)
-        stmt = f'{tabs}while({cmp_lhs}{cmp_op}{cmp_rhs}){body_str}'
-      elif stmt_type == 'for':
-        idx = new_local(local_vars)
-        bound = random.choice(constants + local_vars + global_vars)
-        body = gen_random_stmts(num_stmts-1,constants,tabs + '\t',global_vars, local_vars)
-        body_str = '\n'.join(body)
-        stmt = f'{tabs}for(int {idx} = 0; {idx} < {bound}; {idx}++){{{body_str}}}'
+# instantiate model
+
+model = XTransformer(
+  dim = 512,
+  tie_token_emb = True,
+  enc_attn_flash = True,
+  dec_attn_flash = True,
+  return_tgt_loss = True,
+  enc_num_tokens=NUM_TOKENS,
+  enc_depth = 4,
+  enc_heads = 4,
+  enc_max_seq_len = ENC_SEQ_LEN,
+  dec_num_tokens = NUM_TOKENS,
+  dec_depth = 4,
+  dec_heads = 4,
+  dec_max_seq_len = DEC_SEQ_LEN
+).cuda()
+
+model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+params = sum([np.prod(p.size()) for p in model_parameters])
+print(params)
 
 
-def gen_random_expr(max_tokens, vars, constants):
-  assert max_tokens > 0
-  if max_tokens == 1:
-    return random.choice(vars + constants)
-  elif max_tokens == 2:
-    op = random.choice(['~','!'])
-    arg = random.choice(vars + constants)
-    return '(' + op + arg + ')'
-  elif max_tokens >= 10 and random.randint(1,4) == 1:
-    cmp = random.choice(cmp_ops)
-    cmp_tkns = max_tokens //3
-    cmp_lhs_size = random.randint(1,cmp_tkns-1)
-    cmp_rhs_size = cmp_tkns - cmp_lhs_size
-    cmp_lhs = gen_random_expr(cmp_lhs_size,vars,constants)
-    cmp_rhs = gen_random_expr(cmp_rhs_size,vars,constants)
+# optimizer
 
-    max_tokens = max_tokens//3*2
-    lhs_size = random.randint(1, max_tokens-1)
-    rhs_size = max_tokens - lhs_size
-    lhs = gen_random_expr(lhs_size,vars,constants)
-    rhs = gen_random_expr(rhs_size,vars,constants)
-    return f'(({cmp_lhs}{cmp}{cmp_rhs})?{lhs}:{rhs})'
+optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-  elif max_tokens >= 3:
-    op = random.choice(MATH_BINOPS)
-    lhs_size = random.randint(1,max_tokens-2)
-    rhs_size = max_tokens - 1 - lhs_size
-    lhs = gen_random_expr(lhs_size,vars,constants)
-    rhs = gen_random_expr(rhs_size,vars,constants)
-    return f'({lhs}{op}{rhs})'
+# training
+
+for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
+  model.train()
+
+  src, tgt, src_mask = next(cycle())
+
+  loss = model(src, tgt, mask=src_mask)
+  loss.backward()
+  print(f'{i}: {loss.item()}')
+
+  optim.step()
+  optim.zero_grad()
+
+  if i != 0 and i % GENERATE_EVERY == 0:
+    model.eval()
+    src, _, src_mask = next(cycle())
+    src, src_mask = src[:1], src_mask[:1]
+    start_tokens = (torch.ones((1, 1)) * 1).long().cuda()
+
+    sample = model.generate(src, start_tokens, ENC_SEQ_LEN, mask = src_mask)
+    incorrects = (src != sample).abs().sum()
+
+    print(f"input:  ", src)
+    print(f"predicted output:  ", sample)
+    print(f"incorrects: {incorrects}")
 
 
-
-def gen_exhaustive_expr(max_tokens, vars, constants):
-  if max_tokens == 1:
-    yield from vars
-    yield from constants
-  if max_tokens == 2:
-    for op in ['~','!']:
-      for t in gen_exhaustive_expr(1,vars,constants):
-        yield '(' + op + t + ')'
-  if max_tokens >= 3:
-    for op in MATH_BINOPS:
-      for x in range(1,max_tokens-1):
-        for lhs in gen_exhaustive_expr(x,vars,constants):
-          for rhs in gen_exhaustive_expr(max_tokens-1-x,vars,constants):
-            yield '(' + lhs + op + rhs + ')'
-
-for x in range(1000):
-  print(gen_random_expr(64,['a','b','c'], ['1','2','3']))
-
+    h = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(h)
+    print(f'total    : {info.total//1024//1024}MB')
+    print(f'free     : {info.free//1024//1024}MB')
+    print(f'used     : {info.used//1024//1024}MB')

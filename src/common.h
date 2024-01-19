@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <memory.h>
 
 #define die(msg) do{printf("%s\n",msg); exit(1)}while(0)
 #define die_if(cond,msg) do{if(cond){printf("%s\n",msg);exit(1);}}while(0)
@@ -96,6 +97,23 @@ typedef union r128 {
 	f32 f32[4];
 	f64 f64[2];
 } r128;
+
+typedef enum dtype {
+	DT_S8 = 0,
+	DT_U8,
+	DT_S16,
+	DT_U16,
+	DT_S32,
+	DT_U32,
+	DT_S64,
+	DT_U64,
+	DT_S128,
+	DT_U128,
+	DT_F16,
+	DT_F32,
+	DT_F64
+} dtype;
+
 
 // https://prng.di.unimi.it/
 /* todo: does a public static function with static function data have multiple copies of said static data in each */
