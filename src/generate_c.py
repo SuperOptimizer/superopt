@@ -1,7 +1,7 @@
 import random
 import copy
 
-arith_ops = ['+','-','*',]#'/','%',
+arith_ops = ['+','-','*','/','%',]
 cmp_ops = ['==','!=','>','<','>=','<=']
 logical_ops = ['&&','||']
 bit_ops = ['&','|','^','>>','<<']
@@ -81,7 +81,7 @@ def gen_random_expr(max_tokens, vars, constants):
     op = random.choice(['~','!'])
     arg = random.choice(vars + constants)
     return '(' + op + arg + ')'
-  elif max_tokens >= 10 and random.randint(1,4) == 1:
+  elif max_tokens >= 10 and random.randint(1,2) == 1:
     cmp = random.choice(cmp_ops)
     cmp_tkns = max_tokens //3
     cmp_lhs_size = random.randint(1,cmp_tkns-1)
