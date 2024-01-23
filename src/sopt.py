@@ -17,9 +17,9 @@ NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
 LEARNING_RATE = 3e-4
 GENERATE_EVERY  = 10
-NUM_TOKENS = 16 + 2
-ENC_SEQ_LEN = 64
-DEC_SEQ_LEN = 128 + 1
+NUM_TOKENS = 4200 + 2
+ENC_SEQ_LEN = 512
+DEC_SEQ_LEN = 1024 + 1
 
 # helpers
 
@@ -35,24 +35,24 @@ def cycle():
 # instantiate model
 
 model = XTransformer(
-  dim = 512,
+  dim = 128*3*3*2,
   tie_token_emb = True,
   enc_attn_flash = True,
   dec_attn_flash = True,
   return_tgt_loss = True,
   enc_num_tokens=NUM_TOKENS,
-  enc_depth = 4,
-  enc_heads = 4,
+  enc_depth = 2+2+2+2,
+  enc_heads = 2+2+2+2,
   enc_max_seq_len = ENC_SEQ_LEN,
   dec_num_tokens = NUM_TOKENS,
-  dec_depth = 4,
-  dec_heads = 4,
+  dec_depth = 2+2+2+2,
+  dec_heads = 2+2+2+2,
   dec_max_seq_len = DEC_SEQ_LEN
 ).cuda()
 
 model_parameters = filter(lambda p: p.requires_grad, model.parameters())
 params = sum([np.prod(p.size()) for p in model_parameters])
-print(params)
+print(f"num params {params//1024//1024}M {params//1024}K ")
 
 
 # optimizer
