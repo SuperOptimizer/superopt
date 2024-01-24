@@ -81,7 +81,7 @@ def gen_random_expr(max_tokens, vars, constants):
     op = random.choice(['~','!'])
     arg = random.choice(vars + constants)
     return '(' + op + arg + ')'
-  elif max_tokens >= 10 and random.randint(1,2) == 1:
+  elif max_tokens >= 10:
     cmp = random.choice(cmp_ops)
     cmp_tkns = max_tokens //3
     cmp_lhs_size = random.randint(1,cmp_tkns-1)
@@ -104,10 +104,10 @@ def gen_random_expr(max_tokens, vars, constants):
     rhs = gen_random_expr(rhs_size,vars,constants)
     return f'({lhs}{op}{rhs})'
 
-def gen_random_func(max_tokens, args, constants, dtype, name):
+def gen_random_func(max_tokens, args, constants, dtypes, name):
   body = gen_random_expr(max_tokens, args, constants)
-  args_str = ','.join(' '.join([dtype, a]) for a in args)
-  return f'{dtype} {name}({args_str}){{ return {body};}}'
+  args_str = ','.join(' '.join([random.choice(dtypes), a]) for a in args)
+  return f'{random.choice(dtypes)} {name}({args_str}){{ return {body};}}'
 
 def gen_exhaustive_expr(max_tokens, vars, constants):
   if max_tokens == 1:

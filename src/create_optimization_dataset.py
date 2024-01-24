@@ -6,14 +6,15 @@ import generate_c
 
 def compile(uuid):
   args = ['a','b','c','d','e','f']
-  constants = ['0','1','2','3','4','8','16','32']
+  args = ['*' +a if random.randint(1,2)==1 else '' + a for a in args]
   constants = random.sample(range(-2048,2047),8)
+  constants.extend([-16,-8,-4,-2,-1,0,1,2,3,4,5,8,16])
   constants = [str(x) for x in constants]
   while True:
-    func = generate_c.gen_random_func(random.randint(1,32),
+    func = generate_c.gen_random_func(random.randint(1,24),
                                         random.sample(args, random.randint(1,len(args))),
-                                        random.sample(constants,random.randint(1,len(constants)//2)),
-                                        'int',
+                                        random.sample(constants,random.randint(1,len(constants)//4)),
+                                        ['char','unsigned char','short','unsigned short','int','unsigned int','long long','unsigned long long'],
                                         f'func_{uuid}')
     #func = 'int func(int a, int b, int c){return 1 >> 100;}'
     with open(f'/tmp/sopt/func{uuid}.c', 'w+') as f:
