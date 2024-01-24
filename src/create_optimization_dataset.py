@@ -30,13 +30,56 @@ def compile(uuid):
   stripped_unopt = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-strip /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
   stripped_opt = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-strip /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
 
-  unopt_listing = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-objdump --no-show-raw-insn -d /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
-  opt_listing = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-objdump --no-show-raw-insn -d /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
+  unopt_listing = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
+  opt_listing = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
 
   unopt_disasm = unopt_listing.stdout.decode('ascii')
   opt_disasm = opt_listing.stdout.decode('ascii')
 
-  print()
+  out = dict()
+  out['c'] = func
+  for listing in [unopt_disasm, opt_disasm]:
+    in_disasm = False
+    disasm = []
+    for line in listing.split('\n'):
+      if not in_disasm:
+        if line.strip().startswith('0000000000000000'):
+          in_disasm = True
+          continue
+      else:
+        if line.strip() == '':
+          break
+        if '#' in line:
+          line = line.split('#')[0]
+        addr, asm = line.strip().split(':')
+        addr = addr.strip()
+        asm = asm.strip()
+        instr = asm.split()[0].strip()
+        if instr in ['lui','c.lui']:
+          #convert hex imm to decimal
+          imm = asm.split(',')[1]
+          newimm = int(imm,16)
+          asm = asm.replace(imm,str(newimm))
+        if instr in ['beq','bne','blt','bge','bltu','bgeu','c.beqz','c.bnez', 'c.j']:
+          # objdump AFAICT only dumps absolute dump addresses but the instruction is encoded as a relative address
+          # so convert to a relative address here
+          if instr == 'c.j':
+            branchaddr = asm.split()[1]
+          else:
+            branchaddr = asm.split(',')[-1]
+          offset = int(branchaddr,16) - int(addr,16)
+          asm = asm.replace(branchaddr, ('+' if offset > 0 else '') + str(offset))
+        disasm.append(asm)
+    k = 'unopt' if listing == unopt_disasm else 'opt'
+    out[k] = '\n'.join(disasm)
+  return out
 
-prog = compile(1)
-print(prog)
+
+from riscv_sopt import tokenize_asm
+
+for x in range(1000):
+  prog = compile(x)
+  unopt = []
+  for line in prog['unopt'].split('\n'):
+    tokenized = tokenize_asm(line.strip())
+  print(prog)
