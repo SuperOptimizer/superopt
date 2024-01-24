@@ -314,7 +314,3 @@ def tokenize_asm(asm: str):
       assert False
   return parsed, ret
 
-ret=tokenize_asm("addi a0,zero,123")
-print(ret)
-
-

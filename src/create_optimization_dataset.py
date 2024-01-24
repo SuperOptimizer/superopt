@@ -3,6 +3,9 @@ import subprocess
 import tempfile
 import os
 import generate_c
+from collections import defaultdict
+
+USED_INSTRS = defaultdict(lambda: 0)
 
 def compile(uuid):
   args = ['a','b','c','d','e','f']
@@ -56,6 +59,11 @@ def compile(uuid):
         addr = addr.strip()
         asm = asm.strip()
         instr = asm.split()[0].strip()
+        USED_INSTRS[instr]+=1
+        if instr in ['c.ebreak','ebreak']:
+          #TODO: ???
+          # for now we will just not output the program
+          return None
         if instr in ['lui','c.lui']:
           #convert hex imm to decimal
           imm = asm.split(',')[1]
@@ -76,11 +84,19 @@ def compile(uuid):
   return out
 
 
-from riscv_sopt import tokenize_asm
+from riscv_sopt import tokenize_asm, INSTRS
+INSTRS = set(INSTRS)
 
 for x in range(1000):
   prog = compile(x)
   unopt = []
+  if prog is None:
+    continue
   for line in prog['unopt'].split('\n'):
     tokenized = tokenize_asm(line.strip())
+  if x % 10 == 0:
+    for k,v in sorted(USED_INSTRS.items(),key= lambda x: x[1]):
+      print(k,v)
+    print("unused instrs", sorted(INSTRS - USED_INSTRS.keys()))
+
   print(prog)
