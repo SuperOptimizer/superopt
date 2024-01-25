@@ -1,4 +1,4 @@
-#include "oneday.h"
+#include "common.h"
 
 typedef struct riscv {
 	r64 gpr[32];

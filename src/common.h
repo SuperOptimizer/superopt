@@ -2,10 +2,16 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
+//#include <stdlib.h> div_t grrr >:(
 #include <stdbool.h>
 #include <assert.h>
 #include <memory.h>
+
+//stdlib.h stuff
+void *malloc(size_t size);
+void free(void* ptr);
+void *realloc(void *ptr, size_t size);
+
 
 #define die(msg) do{printf("%s\n",msg); exit(1)}while(0)
 #define die_if(cond,msg) do{if(cond){printf("%s\n",msg);exit(1);}}while(0)
@@ -1228,3 +1234,131 @@ typedef mat(128,128,f64) f64x128x128;
 
 
 VEC(u8, u8vec)
+
+
+//lots o function wrappers around operators
+#define OPERATOR_WRAPPER_INT(op, name)\
+	public constfunc u8 name(u8 a, u8 b){return a op b;}\
+	public constfunc s8 name(s8 a, s8 b){return a op b;}\
+	public constfunc u16 name(u16 a, u16 b){return a op b;}\
+	public constfunc s16 name(s16 a, s16 b){return a op b;}\
+	public constfunc u32 name(u32 a, u32 b){return a op b;}\
+	public constfunc s32 name(s32 a, s32 b){return a op b;}\
+	public constfunc u64 name(u64 a, u64 b){return a op b;}\
+	public constfunc s64 name(s64 a, s64 b){return a op b;}\
+	public constfunc u128 name(u128 a, u128 b){return a op b;}\
+	public constfunc s128 name(s128 a, s128 b){return a op b;}
+
+#define OPERATOR_WRAPPER_FLOAT(op, name)\
+	public constfunc f16 name(f16 a, f16 b){return a op b;}\
+	public constfunc f32 name(f32 a, f32 b){return a op b;}\
+	public constfunc f64 name(f64 a, f64 b){return a op b;}
+
+OPERATOR_WRAPPER_INT(+, add)
+OPERATOR_WRAPPER_INT(-, sub)
+OPERATOR_WRAPPER_INT(*, mul)
+OPERATOR_WRAPPER_INT(/, div)
+OPERATOR_WRAPPER_INT(>, gt)
+OPERATOR_WRAPPER_INT(>=, ge)
+OPERATOR_WRAPPER_INT(<, lt)
+OPERATOR_WRAPPER_INT(<=, le)
+OPERATOR_WRAPPER_INT(==, eq)
+OPERATOR_WRAPPER_INT(!=, neq)
+OPERATOR_WRAPPER_INT(%, mod)
+OPERATOR_WRAPPER_INT(&, and)
+OPERATOR_WRAPPER_INT(|, or)
+OPERATOR_WRAPPER_INT(^, xor)
+OPERATOR_WRAPPER_INT(<<, lsl)
+
+OPERATOR_WRAPPER_FLOAT(+, add)
+OPERATOR_WRAPPER_FLOAT(-, sub)
+OPERATOR_WRAPPER_FLOAT(*, mul)
+OPERATOR_WRAPPER_FLOAT(/, div)
+OPERATOR_WRAPPER_FLOAT(>, gt)
+OPERATOR_WRAPPER_FLOAT(>=, ge)
+OPERATOR_WRAPPER_FLOAT(<, lt)
+OPERATOR_WRAPPER_FLOAT(<=, le)
+OPERATOR_WRAPPER_FLOAT(==, eq)
+OPERATOR_WRAPPER_FLOAT(!=, neq)
+
+public constfunc f16 mod(f16 a, f16 b){unreachable();}
+public constfunc f32 mod(f32 a, f32 b){unreachable();}
+public constfunc f64 mod(f64 a, f64 b){unreachable();}
+
+public constfunc f16 and(f16 a, f16 b){unreachable();}
+public constfunc f32 and(f32 a, f32 b){unreachable();}
+public constfunc f64 and(f64 a, f64 b){unreachable();}
+
+public constfunc f16 or(f16 a, f16 b){unreachable();}
+public constfunc f32 or(f32 a, f32 b){unreachable();}
+public constfunc f64 or(f64 a, f64 b){unreachable();}
+
+public constfunc f16 xor(f16 a, f16 b){unreachable();}
+public constfunc f32 xor(f32 a, f32 b){unreachable();}
+public constfunc f64 xor(f64 a, f64 b){unreachable();}
+
+public constfunc f16 lsl(f16 a, f16 b){unreachable();}
+public constfunc f32 lsl(f32 a, f32 b){unreachable();}
+public constfunc f64 lsl(f64 a, f64 b){unreachable();}
+
+public constfunc f16 lsr(f16 a, f16 b){unreachable();}
+public constfunc f32 lsr(f32 a, f32 b){unreachable();}
+public constfunc f64 lsr(f64 a, f64 b){unreachable();}
+
+public constfunc f16 asr(f16 a, f16 b){unreachable();}
+public constfunc f32 asr(f32 a, f32 b){unreachable();}
+public constfunc f64 asr(f64 a, f64 b){unreachable();}
+
+
+public constfunc s8   lsr(s8 a, s8 b){return (u8)a >> b ;}
+public constfunc u8   lsr(u8 a, u8 b){return a >> b ;}
+public constfunc s16  lsr(s16 a, s16 b){return (u16)a >> b ;}
+public constfunc u16  lsr(u16 a, u16 b){return a >> b ;}
+public constfunc s32  lsr(s32 a, s32 b){return (u32)a >> b ;}
+public constfunc u32  lsr(u32 a, u32 b){return a >> b ;}
+public constfunc s64  lsr(s64 a, s64 b){return (u64)a >> b ;}
+public constfunc u64  lsr(u64 a, u64 b){return a >> b ;}
+public constfunc s128 lsr(s128 a, s128 b){return (u128)a >> b ;}
+public constfunc u128 lsr(u128 a, u128 b){return a >> b ;}
+
+
+public constfunc s8   asr(s8 a, s8 b){return a >> b ;}
+public constfunc u8   asr(u8 a, u8 b){return (s8)a >> b ;}
+public constfunc s16  asr(s16 a, s16 b){return a >> b ;}
+public constfunc u16  asr(u16 a, u16 b){return (s16)a >> b ;}
+public constfunc s32  asr(s32 a, s32 b){return a >> b ;}
+public constfunc u32  asr(u32 a, u32 b){return (s32)a >> b ;}
+public constfunc s64  asr(s64 a, s64 b){return a >> b ;}
+public constfunc u64  asr(u64 a, u64 b){return (s64)a >> b ;}
+public constfunc s128 asr(s128 a, s128 b){return a >> b ;}
+public constfunc u128 asr(u128 a, u128 b){return (s128)a >> b ;}
+
+
+public constfunc s8   mac(s8 a, s8 b, s8 c){return a + b * c;}
+public constfunc u8   mac(u8 a, u8 b, s8 c){return a + b * c;}
+public constfunc s16  mac(s16 a, s16 b, s8 c){return a + b * c;}
+public constfunc u16  mac(u16 a, u16 b, s8 c){return a + b * c;}
+public constfunc s32  mac(s32 a, s32 b, s8 c){return a + b * c;}
+public constfunc u32  mac(u32 a, u32 b, s8 c){return a + b * c;}
+public constfunc s64  mac(s64 a, s64 b, s8 c){return a + b * c;}
+public constfunc u64  mac(u64 a, u64 b, s8 c){return a + b * c;}
+public constfunc s128 mac(s128 a, s128 b, s8 c){return a + b * c;}
+public constfunc u128 mac(u128 a, u128 b, s8 c){return a + b * c;}
+public constfunc f16  mac(f16 a, f16 b, s8 c){return a + b * c;}
+public constfunc f32  mac(f32 a, f32 b, s8 c){return a + b * c;}
+public constfunc f64  mac(f64 a, f64 b, s8 c){return a + b * c;}
+
+public constfunc s8   select(s8 cond, s8 a, s8 b){return cond ? a : b;}
+public constfunc u8   select(u8 cond, u8 a, s8 b){return cond ? a : b;}
+public constfunc s16  select(s16 cond, s16 a, s8 b){return cond ? a : b;}
+public constfunc u16  select(u16 cond, u16 a, s8 b){return cond ? a : b;}
+public constfunc s32  select(s32 cond, s32 a, s8 b){return cond ? a : b;}
+public constfunc u32  select(u32 cond, u32 a, s8 b){return cond ? a : b;}
+public constfunc s64  select(s64 cond, s64 a, s8 b){return cond ? a : b;}
+public constfunc u64  select(u64 cond, u64 a, s8 b){return cond ? a : b;}
+public constfunc s128 select(s128 cond, s128 a, s8 b){return cond ? a : b;}
+public constfunc u128 select(u128 cond, u128 a, s8 b){return cond ? a : b;}
+public constfunc f16  select(f16 cond, f16 a, s8 b){return cond ? a : b;}
+public constfunc f32  select(f32 cond, f32 a, s8 b){return cond ? a : b;}
+public constfunc f64  select(f64 cond, f64 a, s8 b){return cond ? a : b;}
+

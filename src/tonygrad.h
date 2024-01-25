@@ -1,6 +1,10 @@
 #pragma once
 #include "common.h"
 
+
+
+
+
 typedef struct dims {
   s32 rank;
   union {
@@ -9,11 +13,31 @@ typedef struct dims {
   };
 } dims;
 
-typedef struct tensor {
-  dtype dtype;
-  dims dims;
-  void* data;
-} tensor;
+typedef dims idx;
+
+public dims dims_new(s32 rank, s32 dims_[static 8]) {
+  dims ret;
+  ret.rank = rank;
+  for(int i=0;i<rank;i++)ret.dims[i] = dims_[i];
+  return ret;
+}
+
+public idx idx_new(s32 rank, s32 dims_[static 8]) {
+  s32 i[] = {0,0,0,0,0,0,0,0};
+  return dims_new(rank, i);
+}
+
+
+#define DIMSDEF(_rank, ...) \
+  typedef struct dims##_rank{\
+  s32 rank; \
+  union{\
+  s32 dims[8];\
+    s32 x,y,z,w,i,j,k,l;\
+  };\
+  } dims##_rank;\
+  public dims##_rank dims##_rank##_new(s32 dims[static _rank]){ dims##_rank ret; ret.rank=_rank; for(int i=0;i<_rank;i++)ret.dims[i] = dims[i]; return ret;}
+
 
 public s32 size(dtype dtype) {
   switch(dtype) {
@@ -29,20 +53,96 @@ public s32 size(dtype dtype) {
   return -1;
 }
 
+DIMSDEF(1,x)
+DIMSDEF(2,x,y)
+DIMSDEF(3,x,y,z)
+DIMSDEF(4,x,y,z,w)
+DIMSDEF(5,x,y,z,w,i)
+DIMSDEF(6,x,y,z,w,i,j)
+DIMSDEF(7,x,y,z,w,i,j,k)
+DIMSDEF(8,x,y,z,w,i,j,k,l)
+
+
+typedef struct tensor {
+  dtype dtype;
+  dims dims;
+  void* restrict data;
+} tensor;
+
+#define TENSORDEF(_dtype, DT) \
+  typedef struct tensor_##_dtype {\
+    dtype dtype; \
+    dims dims;\
+    _dtype* restrict data;\
+  } tensor_##_dtype;\
+  tensor_##_dtype tensor_##_dtype##_new(dims dims){\
+  tensor_##_dtype ret;\
+  ret.dtype = DT;\
+  ret.dims = dims;\
+  s32 len = 1;\
+  for(int i = 0; i < dims.rank; i++) len *= ret.dims.dims[i];\
+  ret.data = malloc(len * size(DT));\
+  return ret; \
+  }
+
+TENSORDEF(u8,   DT_U8)
+TENSORDEF(s8,   DT_S8)
+TENSORDEF(u16,  DT_U16)
+TENSORDEF(s16,  DT_S16)
+TENSORDEF(u32,  DT_U32)
+TENSORDEF(s32,  DT_S32)
+TENSORDEF(u64,  DT_U64)
+TENSORDEF(s64,  DT_S64)
+TENSORDEF(u128, DT_U128)
+TENSORDEF(s128, DT_S128)
+TENSORDEF(f16,  DT_F16)
+TENSORDEF(f32,  DT_F32)
+TENSORDEF(f64,  DT_F64)
+
+
+public bool eq(dims a, dims b) {
+  if(a.rank != b.rank) return false;
+  for(int i = 0; i < a.rank; i++) {
+    if(a.dims[i] != b.dims[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+public bool lt(dims idx, dims extent) {
+  assert(idx.rank == extent.rank);
+  for(int i = idx.rank -1; i >= 0; i--) {
+    if(idx.dims[i] < extent.dims[i]-1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+
 public s32 len(tensor t) {
   s32 len = 1;
   for(int i = 0; i < t.dims.rank; i++) len *= t.dims.dims[i];
   return len;
 }
 
-public dims dims_new(s32 x){ return(dims) {1, {x,1,1,1,1,1,1,1,}}; }
-public dims dims_new(s32 x, s32 y){ return(dims) {2,{x,y,1,1,1,1,1,1,}}; }
-public dims dims_new(s32 x, s32 y, s32 z){ return(dims) {3,{x,y,z,1,1,1,1,1,}}; }
-public dims dims_new(s32 x, s32 y, s32 z, s32 w){ return(dims) {4,{x,y,z,w,1,1,1,1,}}; }
-public dims dims_new(s32 x, s32 y, s32 z, s32 w, s32 i){ return(dims) {5,{x,y,z,w,i,1,1,1,}}; }
-public dims dims_new(s32 x, s32 y, s32 z, s32 w, s32 i, s32 j){ return(dims) {6,{x,y,z,w,i,j,1,1,}}; }
-public dims dims_new(s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k){ return(dims) {7,{x,y,z,w,i,j,k,1,}}; }
-public dims dims_new(s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, s32 l){ return(dims) {8,{x,y,z,w,i,j,k,l,}}; }
+
+public dims inc(dims idx, dims extent) {
+  for(int i = idx.rank - 1; i >= 0; i--) {
+    idx.dims[i]++;
+    if(idx.dims[i] < extent.dims[i]) {
+      return idx;
+    }
+    if (idx.dims[i] == extent.dims[i]) {
+      idx.dims[i] = 0;
+    } else {
+      unreachable();
+    }
+  }
+  // trying to increment idx past the extent
+  unreachable();
+}
 
 public tensor tensor_new(dtype dtype, dims dims) {
   tensor ret;
@@ -161,30 +261,16 @@ public purefunc T get_##T(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s3
 public purefunc T get_##T(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, s32 l) {assert(t.dtype == DT); return *(T*)at(t,x,y,z,w,i,j,k,l);} \
 
 
-GET_DEF(u8, DT_U8)
-GET_DEF(s8, DT_S8)
-GET_DEF(u16, DT_U16)
-GET_DEF(s16, DT_S16)
-GET_DEF(u32, DT_U32)
-GET_DEF(s32, DT_S32)
-GET_DEF(u64, DT_U64)
-GET_DEF(s64, DT_S64)
-GET_DEF(u128, DT_U128)
-GET_DEF(s128, DT_S128)
-GET_DEF(f16, DT_F16)
-GET_DEF(f32, DT_F32)
-GET_DEF(f64, DT_F64)
-
 #define SET_DEF(T, DT) \
-  public purefunc void set(tensor t, dims dims, T data){assert(t.dtype == DT); *(T*)at(t,dims) = data;}\
-  public purefunc void set(tensor t, s32 x, T data) {assert(t.dtype == DT); *(T*)at(t,x) = data;} \
-  public purefunc void set(tensor t, s32 x, s32 y, T data) {assert(t.dtype == DT); *(T*)at(t,x,y) = data;} \
-  public purefunc void set(tensor t, s32 x, s32 y, s32 z, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z) = data;} \
-  public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w) = data;} \
-  public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i) = data;} \
-  public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i,j) = data;} \
-  public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i,j,k) = data;} \
-  public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, s32 l, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i,j,k,l) = data;} \
+public purefunc void set(tensor t, dims dims, T data){assert(t.dtype == DT); *(T*)at(t,dims) = data;}\
+public purefunc void set(tensor t, s32 x, T data) {assert(t.dtype == DT); *(T*)at(t,x) = data;} \
+public purefunc void set(tensor t, s32 x, s32 y, T data) {assert(t.dtype == DT); *(T*)at(t,x,y) = data;} \
+public purefunc void set(tensor t, s32 x, s32 y, s32 z, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z) = data;} \
+public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w) = data;} \
+public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i) = data;} \
+public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i,j) = data;} \
+public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i,j,k) = data;} \
+public purefunc void set(tensor t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, s32 l, T data) {assert(t.dtype == DT); *(T*)at(t,x,y,z,w,i,j,k,l) = data;} \
 
 SET_DEF(u8, DT_U8)
 SET_DEF(s8, DT_S8)
@@ -200,56 +286,154 @@ SET_DEF(f16, DT_F16)
 SET_DEF(f32, DT_F32)
 SET_DEF(f64, DT_F64)
 
+GET_DEF(u8, DT_U8)
+GET_DEF(s8, DT_S8)
+GET_DEF(u16, DT_U16)
+GET_DEF(s16, DT_S16)
+GET_DEF(u32, DT_U32)
+GET_DEF(s32, DT_S32)
+GET_DEF(u64, DT_U64)
+GET_DEF(s64, DT_S64)
+GET_DEF(u128, DT_U128)
+GET_DEF(s128, DT_S128)
+GET_DEF(f16, DT_F16)
+GET_DEF(f32, DT_F32)
+GET_DEF(f64, DT_F64)
+
+#undef GET_DEF
 #undef SET_DEF
 
-#define SCALAR_DEF(name, op) \
-  public constfunc s8 name(s8 a, s8 b){return a op b;}\
-  public constfunc u8 name(u8 a, u8 b){return a op b;}\
-  public constfunc s16 name(s16 a, s16 b){return a op b;}\
-  public constfunc u16 name(u16 a, u16 b){return a op b;}\
-  public constfunc s32 name(s32 a, s32 b){return a op b;}\
-  public constfunc u32 name(u32 a, u32 b){return a op b;}\
-  public constfunc s64 name(s64 a, s64 b){return a op b;}\
-  public constfunc u64 name(u64 a, u64 b){return a op b;}\
-  public constfunc u128 name(u128 a, u128 b){return a op b;}\
-  public constfunc s128 name(s128 a, s128 b){return a op b;}\
-  public constfunc f16 name(f16 a, f16 b){return a op b;}\
-  public constfunc f32 name(f32 a, f32 b){return a op b;}\
-  public constfunc f64 name(f64 a, f64 b){return a op b;}
+#define WRAP_GET(T) \
+public purefunc T get(tensor_##T t, dims dims){ return get_##T(*(tensor*)&t, dims);}\
+public purefunc T get(tensor_##T t, s32 x) { return get_##T(*(tensor*)&t, x);} \
+public purefunc T get(tensor_##T t, s32 x, s32 y) { return get_##T(*(tensor*)&t, x,y);}  \
+public purefunc T get(tensor_##T t, s32 x, s32 y, s32 z) {return get_##T(*(tensor*)&t, x,y,z);} \
+public purefunc T get(tensor_##T t, s32 x, s32 y, s32 z, s32 w) {return get_##T(*(tensor*)&t, x,y,z,w);}  \
+public purefunc T get(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i) {return get_##T(*(tensor*)&t, x,y,z,w,i); } \
+public purefunc T get(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j) {return get_##T(*(tensor*)&t, x,y,z,w,i,j); } \
+public purefunc T get(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k) {return get_##T(*(tensor*)&t, x,y,z,w,i,j,k); } \
+public purefunc T get(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, s32 l) {return get_##T(*(tensor*)&t, x,y,z,w,i,j,k,l); } \
 
-SCALAR_DEF(add, +)
-SCALAR_DEF(sub, -)
-SCALAR_DEF(mul, *)
-//SCALAR_DEF(div, /)
+#define WRAP_SET(T) \
+public purefunc void set(tensor_##T t, dims dims, T data){set(*(tensor*)&t,dims, data);}\
+public purefunc void set(tensor_##T t, s32 x, T data) {set(*(tensor*)&t,x, data);} \
+public purefunc void set(tensor_##T t, s32 x, s32 y, T data) {set(*(tensor*)&t,x,y, data);} \
+public purefunc void set(tensor_##T t, s32 x, s32 y, s32 z, T data) {set(*(tensor*)&t,x,y,z, data);} \
+public purefunc void set(tensor_##T t, s32 x, s32 y, s32 z, s32 w, T data) {set(*(tensor*)&t,x,y,z,w, data);} \
+public purefunc void set(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i, T data) {set(*(tensor*)&t,x,y,z,w,i, data);} \
+public purefunc void set(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, T data) {set(*(tensor*)&t,x,y,z,w,i,j, data);} \
+public purefunc void set(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, T data) {set(*(tensor*)&t,x,y,z,w,i,j,k, data);} \
+public purefunc void set(tensor_##T t, s32 x, s32 y, s32 z, s32 w, s32 i, s32 j, s32 k, s32 l, T data) {set(*(tensor*)&t,x,y,z,w,i,j,k,l, data);} \
 
-#undef SCALAR_DEF
 
-#define for1(extent, body){for(int x = 0; x < extent.x; x++){body}
-#define for2(extent, body)(for1(extent, for(int y = 0; y < extent.y; y++){body})
-#define for3(extent, body)(for2(extent, for(int z = 0; z < extent.z; z++){body})
-#define for4(extent, body)(for3(extent, for(int w = 0; w < extent.w; w++){body})
-#define for5(extent, body)(for4(extent, for(int i = 0; i < extent.z; i++){body})
-#define for6(extent, body)(for5(extent, for(int j = 0; j < extent.z; j++){body})
-#define for7(extent, body)(for6(extent, for(int k = 0; k < extent.z; k++){body})
-#define for8(extent, body)(for7(extent, for(int l = 0; l < extent.z; l++){body})
+WRAP_GET(u8)
+WRAP_GET(s8)
+WRAP_GET(u16)
+WRAP_GET(s16)
+WRAP_GET(u32)
+WRAP_GET(s32)
+WRAP_GET(u64)
+WRAP_GET(s64)
+WRAP_GET(u128)
+WRAP_GET(s128)
+WRAP_GET(f16)
+WRAP_GET(f32)
+WRAP_GET(f64)
 
-public tensor add(tensor a, tensor b) {
-  assert(a.dims.rank == b.dims.rank);
-  assert(memcmp(&a.dims,&b.dims,sizeof(dims)));
-  assert(a.dtype == b.dtype);
-  tensor ret = tensor_new(a.dtype, a.dims);
-  switch(a.dims.rank) {
-    case 1: {
-      switch(a.dtype) {
-        case DT_U8: for1(ret.dims, set(ret, x,))
-      }
-    }
+WRAP_SET(u8)
+WRAP_SET(s8)
+WRAP_SET(u16)
+WRAP_SET(s16)
+WRAP_SET(u32)
+WRAP_SET(s32)
+WRAP_SET(u64)
+WRAP_SET(s64)
+WRAP_SET(u128)
+WRAP_SET(s128)
+WRAP_SET(f16)
+WRAP_SET(f32)
+WRAP_SET(f64)
+
+#undef WRAP_GET
+#undef WRAP_SET
+
+#define for1(extent, body)for(int x = 0; x < extent.x; x++){body}
+#define for2(extent, body)for1(extent, for(int y = 0; y < extent.y; y++){body}
+#define for3(extent, body)for2(extent, for(int z = 0; z < extent.z; z++){body}
+#define for4(extent, body)for3(extent, for(int w = 0; w < extent.w; w++){body}
+#define for5(extent, body)for4(extent, for(int i = 0; i < extent.z; i++){body}
+#define for6(extent, body)for5(extent, for(int j = 0; j < extent.z; j++){body}
+#define for7(extent, body)for6(extent, for(int k = 0; k < extent.z; k++){body}
+#define for8(extent, body)for7(extent, for(int l = 0; l < extent.z; l++){body}
+
+#define SCALAR_TENSOR_DEFS(func) \
+  public tensor func(tensor a, tensor b) {\
+    assert(a.dims.rank == b.dims.rank);\
+    assert(eq(a.dims,b.dims));\
+    tensor ret = tensor_new(a.dtype, a.dims);\
+    for(idx i = idx_new(a.dims.rank,a.dims.dims); lt(i, a.dims); i = inc(i, a.dims)) {\
+      switch(a.dtype) {\
+        case DT_U8:   set(ret, i, func(get_u8(a,i),    get_u8(b,i)));  break;\
+        case DT_S8:   set(ret, i, func(get_s8(a,i),    get_s8(b,i)));  break;\
+        case DT_U16:  set(ret, i, func(get_u16(a,i),   get_u16(b,i)));  break;\
+        case DT_S16:  set(ret, i, func(get_s16(a,i),   get_s16(b,i)));  break;\
+        case DT_U32:  set(ret, i, func(get_u32(a,i),   get_u32(b,i)));  break;\
+        case DT_S32:  set(ret, i, func(get_s32(a,i),   get_s32(b,i)));  break;\
+        case DT_U64:  set(ret, i, func(get_u64(a,i),   get_u64(b,i)));  break;\
+        case DT_S64:  set(ret, i, func(get_s64(a,i),   get_s64(b,i)));  break;\
+        case DT_U128: set(ret, i, func(get_u128(a,i),  get_u128(b,i)));  break;\
+        case DT_S128: set(ret, i, func(get_s128(a,i),  get_s128(b,i)));  break;\
+        case DT_F16:  set(ret, i, func(get_f16(a,i),   get_f16(b,i)));  break;\
+        case DT_F32:  set(ret, i, func(get_f32(a,i),   get_f32(b,i)));  break;\
+        case DT_F64:  set(ret, i, func(get_f64(a,i),   get_f64(b,i)));  break;\
+      }\
+    }\
+    return ret;\
   }
-  for(int i  = 0; i < len(a); i++) {
-    switch(a.dtype) {
-      case DT_U8: *(u8*)&ret.data[i] = add(*(u8*)&a.data[i], *(u8*)&b.data[i]); break;
 
-    }
+SCALAR_TENSOR_DEFS(add)
+SCALAR_TENSOR_DEFS(sub)
+SCALAR_TENSOR_DEFS(mul)
+SCALAR_TENSOR_DEFS(div)
+SCALAR_TENSOR_DEFS(gt)
+SCALAR_TENSOR_DEFS(ge)
+SCALAR_TENSOR_DEFS(lt)
+SCALAR_TENSOR_DEFS(le)
+SCALAR_TENSOR_DEFS(eq)
+SCALAR_TENSOR_DEFS(neq)
+SCALAR_TENSOR_DEFS(mod)
+SCALAR_TENSOR_DEFS(and)
+SCALAR_TENSOR_DEFS(or)
+SCALAR_TENSOR_DEFS(xor)
+SCALAR_TENSOR_DEFS(lsl)
+SCALAR_TENSOR_DEFS(lsr)
+SCALAR_TENSOR_DEFS(asr)
 
+
+#define SCALAR_TENSOR_3_DEFS(func) \
+  public tensor func(tensor a, tensor b, tensor c) {\
+  assert(a.dims.rank == b.dims.rank && b.dims.rank == c.dims.rank);\
+  assert(eq(a.dims,b.dims) && eq(b.dims,c.dims));\
+  tensor ret = tensor_new(a.dtype, a.dims);\
+  for(idx i = idx_new(a.dims.rank,a.dims.dims); lt(i, a.dims); i = inc(i, a.dims)) {\
+    switch(a.dtype) {\
+      case DT_U8:   set(ret, i, func(get_u8(a,i),    get_u8(b,i),   get_u8(c,i)));  break;\
+      case DT_S8:   set(ret, i, func(get_s8(a,i),    get_s8(b,i),   get_u8(c,i)));  break;\
+      case DT_U16:  set(ret, i, func(get_u16(a,i),   get_u16(b,i),  get_u8(c,i)));  break;\
+      case DT_S16:  set(ret, i, func(get_s16(a,i),   get_s16(b,i),  get_u8(c,i)));  break;\
+      case DT_U32:  set(ret, i, func(get_u32(a,i),   get_u32(b,i),  get_u8(c,i)));  break;\
+      case DT_S32:  set(ret, i, func(get_s32(a,i),   get_s32(b,i),  get_u8(c,i)));  break;\
+      case DT_U64:  set(ret, i, func(get_u64(a,i),   get_u64(b,i),  get_u8(c,i)));  break;\
+      case DT_S64:  set(ret, i, func(get_s64(a,i),   get_s64(b,i),  get_u8(c,i)));  break;\
+      case DT_U128: set(ret, i, func(get_u128(a,i),  get_u128(b,i), get_u8(c,i)));  break;\
+      case DT_S128: set(ret, i, func(get_s128(a,i),  get_s128(b,i), get_u8(c,i)));  break;\
+      case DT_F16:  set(ret, i, func(get_f16(a,i),   get_f16(b,i),  get_u8(c,i)));  break;\
+      case DT_F32:  set(ret, i, func(get_f32(a,i),   get_f32(b,i),  get_u8(c,i)));  break;\
+      case DT_F64:  set(ret, i, func(get_f64(a,i),   get_f64(b,i),  get_u8(c,i)));  break;\
+    }\
+  }\
+  return ret;\
   }
-}
+
+SCALAR_TENSOR_3_DEFS(select)
+SCALAR_TENSOR_3_DEFS(mac)
