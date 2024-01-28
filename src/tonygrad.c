@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
     get_f32(a,i);
     printf("%f\n",get_f32(a,i));
   }
-  auto ret = add(a,b);
+  auto ret = add(a,b, DT_F32);
   for(int i = 0; i < 1024; i++) {
     printf("%f ",get_f32(ret,i));
     if(i % 16 == 15)printf("\n");

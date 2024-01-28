@@ -75,7 +75,7 @@ typedef struct tensor {
     dims dims;\
     _dtype* restrict data;\
   } tensor_##_dtype;\
-  tensor_##_dtype tensor_##_dtype##_new(dims dims){\
+  public tensor_##_dtype tensor_##_dtype##_new(dims dims){\
   tensor_##_dtype ret;\
   ret.dtype = DT;\
   ret.dims = dims;\
@@ -367,12 +367,13 @@ WRAP_SET(f64)
 #define for8(extent, body)for7(extent, for(int l = 0; l < extent.z; l++){body}
 
 #define SCALAR_TENSOR_DEFS(func) \
-  public tensor func(tensor a, tensor b) {\
+  public tensor func(tensor a, tensor b, dtype dtype) {\
     assert(a.dims.rank == b.dims.rank);\
+    assert(a.dtype == b.dtype && b.dtype == dtype); \
     assert(eq(a.dims,b.dims));\
     tensor ret = tensor_new(a.dtype, a.dims);\
     for(idx i = idx_new(a.dims.rank,a.dims.dims); lt(i, a.dims); i = inc(i, a.dims)) {\
-      switch(a.dtype) {\
+      switch(dtype) {\
         case DT_U8:   set(ret, i, func(get_u8(a,i),    get_u8(b,i)));  break;\
         case DT_S8:   set(ret, i, func(get_s8(a,i),    get_s8(b,i)));  break;\
         case DT_U16:  set(ret, i, func(get_u16(a,i),   get_u16(b,i)));  break;\
@@ -411,25 +412,26 @@ SCALAR_TENSOR_DEFS(asr)
 
 
 #define SCALAR_TENSOR_3_DEFS(func) \
-  public tensor func(tensor a, tensor b, tensor c) {\
+  public tensor func(tensor a, tensor b, tensor c, dtype dtype) {\
   assert(a.dims.rank == b.dims.rank && b.dims.rank == c.dims.rank);\
+  assert(a.dtype == b.dtype && b.dtype == c.dtype && c.dtype == dtype); \
   assert(eq(a.dims,b.dims) && eq(b.dims,c.dims));\
   tensor ret = tensor_new(a.dtype, a.dims);\
   for(idx i = idx_new(a.dims.rank,a.dims.dims); lt(i, a.dims); i = inc(i, a.dims)) {\
-    switch(a.dtype) {\
+    switch(dtype) {\
       case DT_U8:   set(ret, i, func(get_u8(a,i),    get_u8(b,i),   get_u8(c,i)));  break;\
-      case DT_S8:   set(ret, i, func(get_s8(a,i),    get_s8(b,i),   get_u8(c,i)));  break;\
-      case DT_U16:  set(ret, i, func(get_u16(a,i),   get_u16(b,i),  get_u8(c,i)));  break;\
-      case DT_S16:  set(ret, i, func(get_s16(a,i),   get_s16(b,i),  get_u8(c,i)));  break;\
-      case DT_U32:  set(ret, i, func(get_u32(a,i),   get_u32(b,i),  get_u8(c,i)));  break;\
-      case DT_S32:  set(ret, i, func(get_s32(a,i),   get_s32(b,i),  get_u8(c,i)));  break;\
-      case DT_U64:  set(ret, i, func(get_u64(a,i),   get_u64(b,i),  get_u8(c,i)));  break;\
-      case DT_S64:  set(ret, i, func(get_s64(a,i),   get_s64(b,i),  get_u8(c,i)));  break;\
-      case DT_U128: set(ret, i, func(get_u128(a,i),  get_u128(b,i), get_u8(c,i)));  break;\
-      case DT_S128: set(ret, i, func(get_s128(a,i),  get_s128(b,i), get_u8(c,i)));  break;\
-      case DT_F16:  set(ret, i, func(get_f16(a,i),   get_f16(b,i),  get_u8(c,i)));  break;\
-      case DT_F32:  set(ret, i, func(get_f32(a,i),   get_f32(b,i),  get_u8(c,i)));  break;\
-      case DT_F64:  set(ret, i, func(get_f64(a,i),   get_f64(b,i),  get_u8(c,i)));  break;\
+      case DT_S8:   set(ret, i, func(get_s8(a,i),    get_s8(b,i),   get_s8(c,i)));  break;\
+      case DT_U16:  set(ret, i, func(get_u16(a,i),   get_u16(b,i),  get_u16(c,i)));  break;\
+      case DT_S16:  set(ret, i, func(get_s16(a,i),   get_s16(b,i),  get_s16(c,i)));  break;\
+      case DT_U32:  set(ret, i, func(get_u32(a,i),   get_u32(b,i),  get_u32(c,i)));  break;\
+      case DT_S32:  set(ret, i, func(get_s32(a,i),   get_s32(b,i),  get_s32(c,i)));  break;\
+      case DT_U64:  set(ret, i, func(get_u64(a,i),   get_u64(b,i),  get_u64(c,i)));  break;\
+      case DT_S64:  set(ret, i, func(get_s64(a,i),   get_s64(b,i),  get_s64(c,i)));  break;\
+      case DT_U128: set(ret, i, func(get_u128(a,i),  get_u128(b,i), get_u128(c,i)));  break;\
+      case DT_S128: set(ret, i, func(get_s128(a,i),  get_s128(b,i), get_s128(c,i)));  break;\
+      case DT_F16:  set(ret, i, func(get_f16(a,i),   get_f16(b,i),  get_f16(c,i)));  break;\
+      case DT_F32:  set(ret, i, func(get_f32(a,i),   get_f32(b,i),  get_f32(c,i)));  break;\
+      case DT_F64:  set(ret, i, func(get_f64(a,i),   get_f64(b,i),  get_f64(c,i)));  break;\
     }\
   }\
   return ret;\
@@ -437,3 +439,104 @@ SCALAR_TENSOR_DEFS(asr)
 
 SCALAR_TENSOR_3_DEFS(select)
 SCALAR_TENSOR_3_DEFS(mac)
+
+#define SCALAR_TENSOR_TYPE_WRAP(func)\
+public tensor_u8   func(tensor_u8 a,   tensor_u8 b)   {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_u8*)&ret;}\
+public tensor_s8   func(tensor_s8 a,   tensor_s8 b)   {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_s8*)&ret;}\
+public tensor_u16  func(tensor_u16 a,  tensor_u16 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_u16*)&ret;}\
+public tensor_s16  func(tensor_s16 a,  tensor_s16 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_s16*)&ret;}\
+public tensor_u32  func(tensor_u32 a,  tensor_u32 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_u32*)&ret;}\
+public tensor_s32  func(tensor_s32 a,  tensor_s32 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_s32*)&ret;}\
+public tensor_u64  func(tensor_u64 a,  tensor_u64 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_u64*)&ret;}\
+public tensor_s64  func(tensor_s64 a,  tensor_s64 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_s64*)&ret;}\
+public tensor_u128 func(tensor_u128 a, tensor_u128 b) {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_u128*)&ret;}\
+public tensor_s128 func(tensor_s128 a, tensor_s128 b) {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_s128*)&ret;}\
+public tensor_f16  func(tensor_f16 a,  tensor_f16 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_f16*)&ret;}\
+public tensor_f32  func(tensor_f32 a,  tensor_f32 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_f32*)&ret;}\
+public tensor_f64  func(tensor_f64 a,  tensor_f64 b)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, a.dtype); return *(tensor_f64*)&ret;}
+
+
+#define SCALAR_TENSOR_3_TYPE_WRAP(func)\
+public tensor_u8   func(tensor_u8 a,   tensor_u8 b,   tensor_u8 c)   {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_u8*)&ret;}\
+public tensor_s8   func(tensor_s8 a,   tensor_s8 b,   tensor_s8 c)   {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_s8*)&ret;}\
+public tensor_u16  func(tensor_u16 a,  tensor_u16 b,  tensor_u16 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_u16*)&ret;}\
+public tensor_s16  func(tensor_s16 a,  tensor_s16 b,  tensor_s16 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_s16*)&ret;}\
+public tensor_u32  func(tensor_u32 a,  tensor_u32 b,  tensor_u32 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_u32*)&ret;}\
+public tensor_s32  func(tensor_s32 a,  tensor_s32 b,  tensor_s32 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_s32*)&ret;}\
+public tensor_u64  func(tensor_u64 a,  tensor_u64 b,  tensor_u64 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_u64*)&ret;}\
+public tensor_s64  func(tensor_s64 a,  tensor_s64 b,  tensor_s64 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_s64*)&ret;}\
+public tensor_u128 func(tensor_u128 a, tensor_u128 b, tensor_u128 c) {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_u128*)&ret;}\
+public tensor_s128 func(tensor_s128 a, tensor_s128 b, tensor_s128 c) {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_s128*)&ret;}\
+public tensor_f16  func(tensor_f16 a,  tensor_f16 b,  tensor_f16 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_f16*)&ret;}\
+public tensor_f32  func(tensor_f32 a,  tensor_f32 b,  tensor_f32 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_f32*)&ret;}\
+public tensor_f64  func(tensor_f64 a,  tensor_f64 b,  tensor_f64 c)  {auto ret = func(*(tensor*)&a, *(tensor*)&b, *(tensor*)&c, a.dtype); return *(tensor_f64*)&ret;}
+
+SCALAR_TENSOR_TYPE_WRAP(add)
+SCALAR_TENSOR_TYPE_WRAP(sub)
+SCALAR_TENSOR_TYPE_WRAP(mul)
+SCALAR_TENSOR_TYPE_WRAP(div)
+SCALAR_TENSOR_TYPE_WRAP(gt)
+SCALAR_TENSOR_TYPE_WRAP(ge)
+SCALAR_TENSOR_TYPE_WRAP(lt)
+SCALAR_TENSOR_TYPE_WRAP(le)
+SCALAR_TENSOR_TYPE_WRAP(eq)
+SCALAR_TENSOR_TYPE_WRAP(neq)
+SCALAR_TENSOR_TYPE_WRAP(mod)
+SCALAR_TENSOR_TYPE_WRAP(and)
+SCALAR_TENSOR_TYPE_WRAP(or)
+SCALAR_TENSOR_TYPE_WRAP(xor)
+SCALAR_TENSOR_TYPE_WRAP(lsl)
+SCALAR_TENSOR_TYPE_WRAP(lsr)
+SCALAR_TENSOR_TYPE_WRAP(asr)
+
+SCALAR_TENSOR_3_TYPE_WRAP(select)
+SCALAR_TENSOR_3_TYPE_WRAP(mac)
+
+//activations
+
+OPERATOR_WRAPPER_INT(*, linear)
+OPERATOR_WRAPPER_FLOAT(*, linear)
+
+//TODO: elu should do e^z not 3^z but 3 is kinda close so
+public constfunc u8   elu(u8 z,   u8 alpha)  {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc s8   elu(s8 z,   s8 alpha)  {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc u16  elu(u16 z,  u16 alpha) {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc s16  elu(s16 z,  s16 alpha) {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc u32  elu(u32 z,  u32 alpha) {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc s32  elu(s32 z,  s32 alpha) {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc u64  elu(u64 z,  u64 alpha) {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc s64  elu(s64 z,  s64 alpha) {return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc u128 elu(u128 z, u128 alpha){return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc s128 elu(s128 z, s128 alpha){return z > 0 ? z : alpha*(pow(3,z)-1);}
+public constfunc f16  elu(f16 z,  f16 alpha) {return z > 0.0f ? z : alpha*(pow(M_E,z)-1);}
+public constfunc f32  elu(f32 z,  f32 alpha) {return z > 0.0f ? z : alpha*(pow(M_E,z)-1);}
+public constfunc f64  elu(f64 z,  f64 alpha) {return z > 0.0 ? z  : alpha*(pow(M_E,z)-1);}
+
+
+public constfunc u8   relu(u8 z)  {return max(0,z);}
+public constfunc s8   relu(s8 z)  {return max(0,z);}
+public constfunc u16  relu(u16 z) {return max(0,z);}
+public constfunc s16  relu(s16 z) {return max(0,z);}
+public constfunc u32  relu(u32 z) {return max(0,z);}
+public constfunc s32  relu(s32 z) {return max(0,z);}
+public constfunc u64  relu(u64 z) {return max(0,z);}
+public constfunc s64  relu(s64 z) {return max(0,z);}
+public constfunc u128 relu(u128 z){return max(0,z);}
+public constfunc s128 relu(s128 z){return max(0,z);}
+public constfunc f16  relu(f16 z) {return max(0,z);}
+public constfunc f32  relu(f32 z) {return max(0,z);}
+public constfunc f64  relu(f64 z) {return max(0,z);}
+
+public constfunc u8   sigmoid(u8 z)  {unreachable();}
+public constfunc s8   sigmoid(s8 z)  {unreachable();}
+public constfunc u16  sigmoid(u16 z) {unreachable();}
+public constfunc s16  sigmoid(s16 z) {unreachable();}
+public constfunc u32  sigmoid(u32 z) {unreachable();}
+public constfunc s32  sigmoid(s32 z) {unreachable();}
+public constfunc u64  sigmoid(u64 z) {unreachable();}
+public constfunc s64  sigmoid(s64 z) {unreachable();}
+public constfunc u128 sigmoid(u128 z){unreachable();}
+public constfunc s128 sigmoid(s128 z){unreachable();}
+public constfunc f16  sigmoid(f16 z) {return 1.0f / (1.0f + pow(M_E,-z));}
+public constfunc f32  sigmoid(f32 z) {return 1.0f / (1.0f + pow(M_E,-z));}
+public constfunc f64  sigmoid(f64 z) {return 1.0  / (1.0  + pow(M_E,-z));}

@@ -7,7 +7,8 @@ add_compile_options(-std=gnu2x -fenable-matrix  -ffast-math -Weverything -fwrapv
 add_link_options(-std=gnu2x -fenable-matrix  -ffast-math -Weverything -fwrapv -fno-exceptions -fno-rtti -fpic -fPIC -fPIE -pie -fvisibility=hidden -static-pie -flto -fwhole-program -ffat-lto-objects -march=native -g  -gdwarf-4)
 
 add_compile_options(
-        -Wno-unsafe-buffer-usage
+        -Wno-unsafe-buffer-usage -Wno-c++98-compat -Wno-gnu-auto-type -Wno-declaration-after-statement -Wno-unused-parameter
+        -Wno-pre-c2x-compat
         $<$<CONFIG:DEBUG>:-Og>
         $<$<CONFIG:RELEASE>:-Ofast>
 )

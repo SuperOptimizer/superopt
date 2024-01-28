@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <memory.h>
+#include <math.h>
 
 //stdlib.h stuff
 void *malloc(size_t size);
@@ -25,14 +26,18 @@ void *realloc(void *ptr, size_t size);
 #define hotfunc __attribute__((hot))
 #define coldfunc __attribute__((cold))
 #define leaffunc __attribute__((leaf))
+#define forceinline __attribute__((forceinline))
 #define aligned(n) __attribute__((aligned(n)))
 #define cleanup(func) __attribute__((cleanup(func)))
 #define fallthrough __attribute__((fallthrough))
 #define assume(stmt) __attribute__((assume(stmt)))
 #define unreachable() __builtin_unreachable()
+#define ssizeof(n) ((s32)sizeof(n))
 
 #define public static inline overload __attribute__((visibility("default")))
 #define private static inline overload __attribute__((visibility("hidden")))
+
+
 
 typedef uint8_t u8;
 typedef int8_t s8;
@@ -121,14 +126,17 @@ typedef enum dtype {
 } dtype;
 
 
+public void* malloc(s32 size){assert(size > 0); return malloc((size_t)size);}
+public void *realloc(void *ptr, s32 size){assert(size > 0); return realloc(ptr, (size_t)size);}
+
 // https://prng.di.unimi.it/
 /* todo: does a public static function with static function data have multiple copies of said static data in each */
 /* implementation in different translation units? */
 public u64 randint(void) {
 #define rotl(x, k) ((x << k) | (x >> (64 - k)))
-	static u8 s[4] = {0x1234567890abcdefULL, 0xfedcba0987654321ULL, 0x1f2e3d4c5b6a7089ULL, 0xdeadbeefcafebabeULL};
-	const u8 result = rotl(s[1] * 5, 7) * 9;
-	const u8 t = s[1] << 17;
+	static u64 s[4] = {0x1234567890abcdefULL, 0xfedcba0987654321ULL, 0x1f2e3d4c5b6a7089ULL, 0xdeadbeefcafebabeULL};
+	const u64 result = rotl(s[1] * 5, 7) * 9;
+	const u64 t = s[1] << 17;
 	s[2] ^= s[0];
 	s[3] ^= s[1];
 	s[1] ^= s[2];
@@ -1214,22 +1222,22 @@ typedef mat(128,128,f64) f64x128x128;
 
 #define ARR(T, N, name) \
 	typedef struct name { T* arr; } name; \
-	public name name##_new(void) {name ret; ret.arr = malloc(sizeof(T) * N); return ret; } \
-	public name name##_new(T inp[static N]) {name ret; ret.arr = malloc(sizeof(T) * N); for(int i = 0; i < N; i++) ret.arr[i] = inp[i]; return ret; } \
+	public name name##_new(void) {name ret; ret.arr = malloc(ssizeof(T) * N); return ret; } \
+	public name name##_new(T inp[static N]) {name ret; ret.arr = malloc(ssizeof(T) * N); for(int i = 0; i < N; i++) ret.arr[i] = inp[i]; return ret; } \
 	public s32 len(name name){return N;} \
 	public T at(name name, s32 i){ return name.arr[i];} \
   public name del(name name) { free(name.arr); name.arr = NULL; return name;}
 
 #define VEC(T, name) \
 	typedef struct name {T* vec; s32 len; s32 cap;} name; \
-	public name name##_new(void) {name ret; ret.len = 0; ret.cap = 8; ret.vec = malloc(sizeof(T) * ret.cap); return ret; } \
-	public name name##_new(s32 n, T inp[n]) {name ret; ret.len = n; ret.cap = (n*3)/2; ret.vec = malloc(sizeof(T) * ret.cap); for(int i = 0; i < n; i++) ret.vec[i] = inp[i]; return ret; }\
+	public name name##_new(void) {name ret; ret.len = 0; ret.cap = 8; ret.vec = malloc(ssizeof(T) * ret.cap); return ret; } \
+	public name name##_new(s32 n, T inp[n]) {name ret; ret.len = n; ret.cap = (n*3)/2; ret.vec = malloc(ssizeof(T) * ret.cap); for(int i = 0; i < n; i++) ret.vec[i] = inp[i]; return ret; }\
 	public s32 len(name vec){ return vec.len;}\
-	public s32 size(name vec){ return vec.cap * sizeof(T);}\
+	public s32 size(name vec){ return vec.cap * ssizeof(T);}\
 	public T at(name vec, s32 i){return vec.vec[i];}\
 	public name del(name vec){free(vec.vec); vec.vec = NULL; return vec;} \
 	public name del_idx(name vec, s32 idx) {for(int i = idx; i < vec.len - 1; i++) vec.vec[i] = vec.vec[i+1]; vec.len--; return vec;} \
-	public name insert(name vec, s32 idx, T data){if(vec.len == vec.cap){vec.cap = vec.cap*3/2; vec.vec = realloc(vec.vec, vec.cap*sizeof(T));} vec.len++; for(int i = vec.len; i >= idx; i--){vec.vec[i] = vec.vec[i-1];} return vec;}
+	public name insert(name vec, s32 idx, T data){if(vec.len == vec.cap){vec.cap = vec.cap*3/2; vec.vec = realloc(vec.vec, vec.cap*ssizeof(T));} vec.len++; for(int i = vec.len; i >= idx; i--){vec.vec[i] = vec.vec[i-1];} return vec;}
 
 
 
@@ -1253,6 +1261,8 @@ VEC(u8, u8vec)
 	public constfunc f16 name(f16 a, f16 b){return a op b;}\
 	public constfunc f32 name(f32 a, f32 b){return a op b;}\
 	public constfunc f64 name(f64 a, f64 b){return a op b;}
+
+
 
 OPERATOR_WRAPPER_INT(+, add)
 OPERATOR_WRAPPER_INT(-, sub)
@@ -1335,30 +1345,74 @@ public constfunc u128 asr(u128 a, u128 b){return (s128)a >> b ;}
 
 
 public constfunc s8   mac(s8 a, s8 b, s8 c){return a + b * c;}
-public constfunc u8   mac(u8 a, u8 b, s8 c){return a + b * c;}
-public constfunc s16  mac(s16 a, s16 b, s8 c){return a + b * c;}
-public constfunc u16  mac(u16 a, u16 b, s8 c){return a + b * c;}
-public constfunc s32  mac(s32 a, s32 b, s8 c){return a + b * c;}
-public constfunc u32  mac(u32 a, u32 b, s8 c){return a + b * c;}
-public constfunc s64  mac(s64 a, s64 b, s8 c){return a + b * c;}
-public constfunc u64  mac(u64 a, u64 b, s8 c){return a + b * c;}
-public constfunc s128 mac(s128 a, s128 b, s8 c){return a + b * c;}
-public constfunc u128 mac(u128 a, u128 b, s8 c){return a + b * c;}
-public constfunc f16  mac(f16 a, f16 b, s8 c){return a + b * c;}
-public constfunc f32  mac(f32 a, f32 b, s8 c){return a + b * c;}
-public constfunc f64  mac(f64 a, f64 b, s8 c){return a + b * c;}
+public constfunc u8   mac(u8 a, u8 b, u8 c){return a + b * c;}
+public constfunc s16  mac(s16 a, s16 b, s16 c){return a + b * c;}
+public constfunc u16  mac(u16 a, u16 b, u16 c){return a + b * c;}
+public constfunc s32  mac(s32 a, s32 b, s32 c){return a + b * c;}
+public constfunc u32  mac(u32 a, u32 b, u32 c){return a + b * c;}
+public constfunc s64  mac(s64 a, s64 b, s64 c){return a + b * c;}
+public constfunc u64  mac(u64 a, u64 b, u64 c){return a + b * c;}
+public constfunc s128 mac(s128 a, s128 b, s128 c){return a + b * c;}
+public constfunc u128 mac(u128 a, u128 b, u128 c){return a + b * c;}
+public constfunc f16  mac(f16 a, f16 b, f16 c){return a + b * c;}
+public constfunc f32  mac(f32 a, f32 b, f32 c){return a + b * c;}
+public constfunc f64  mac(f64 a, f64 b, f64 c){return a + b * c;}
 
 public constfunc s8   select(s8 cond, s8 a, s8 b){return cond ? a : b;}
-public constfunc u8   select(u8 cond, u8 a, s8 b){return cond ? a : b;}
-public constfunc s16  select(s16 cond, s16 a, s8 b){return cond ? a : b;}
-public constfunc u16  select(u16 cond, u16 a, s8 b){return cond ? a : b;}
-public constfunc s32  select(s32 cond, s32 a, s8 b){return cond ? a : b;}
-public constfunc u32  select(u32 cond, u32 a, s8 b){return cond ? a : b;}
-public constfunc s64  select(s64 cond, s64 a, s8 b){return cond ? a : b;}
-public constfunc u64  select(u64 cond, u64 a, s8 b){return cond ? a : b;}
-public constfunc s128 select(s128 cond, s128 a, s8 b){return cond ? a : b;}
-public constfunc u128 select(u128 cond, u128 a, s8 b){return cond ? a : b;}
-public constfunc f16  select(f16 cond, f16 a, s8 b){return cond ? a : b;}
-public constfunc f32  select(f32 cond, f32 a, s8 b){return cond ? a : b;}
-public constfunc f64  select(f64 cond, f64 a, s8 b){return cond ? a : b;}
+public constfunc u8   select(u8 cond, u8 a, u8 b){return cond ? a : b;}
+public constfunc s16  select(s16 cond, s16 a, s16 b){return cond ? a : b;}
+public constfunc u16  select(u16 cond, u16 a, u16 b){return cond ? a : b;}
+public constfunc s32  select(s32 cond, s32 a, s32 b){return cond ? a : b;}
+public constfunc u32  select(u32 cond, u32 a, u32 b){return cond ? a : b;}
+public constfunc s64  select(s64 cond, s64 a, s64 b){return cond ? a : b;}
+public constfunc u64  select(u64 cond, u64 a, u64 b){return cond ? a : b;}
+public constfunc s128 select(s128 cond, s128 a, s128 b){return cond ? a : b;}
+public constfunc u128 select(u128 cond, u128 a, u128 b){return cond ? a : b;}
+public constfunc f16  select(f16 cond, f16 a, f16 b){return cond ? a : b;}
+public constfunc f32  select(f32 cond, f32 a, f32 b){return cond ? a : b;}
+public constfunc f64  select(f64 cond, f64 a, f64 b){return cond ? a : b;}
+
+public constfunc u8   pow(u8 a,   u8 b)  {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc s8   pow(s8 a,   s8 b)  {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc u16  pow(u16 a,  u16 b) {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc s16  pow(s16 a,  s16 b) {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc u32  pow(u32 a,  u32 b) {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc s32  pow(s32 a,  s32 b) {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc u64  pow(u64 a,  u64 b) {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc s64  pow(s64 a,  s64 b) {for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc u128 pow(u128 a, u128 b){for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc s128 pow(s128 a, s128 b){for(int i = 0; i < b; i++) a*=a; return a;}
+public constfunc f16  pow(f16 a,  f16 b) {return powf(a,b);}
+public constfunc f32  pow(f32 a,  f32 b) {return powf(a,b);}
+public constfunc f64  pow(f64 a,  f64 b) {return pow(a,b);}
+
+
+public constfunc u8   max(u8 a,   u8 b)  {return a > b ? a : b;}
+public constfunc s8   max(s8 a,   s8 b)  {return a > b ? a : b;}
+public constfunc u16  max(u16 a,  u16 b) {return a > b ? a : b;}
+public constfunc s16  max(s16 a,  s16 b) {return a > b ? a : b;}
+public constfunc u32  max(u32 a,  u32 b) {return a > b ? a : b;}
+public constfunc s32  max(s32 a,  s32 b) {return a > b ? a : b;}
+public constfunc u64  max(u64 a,  u64 b) {return a > b ? a : b;}
+public constfunc s64  max(s64 a,  s64 b) {return a > b ? a : b;}
+public constfunc u128 max(u128 a, u128 b){return a > b ? a : b;}
+public constfunc s128 max(s128 a, s128 b){return a > b ? a : b;}
+public constfunc f16  max(f16 a,  f16 b) {return a > b ? a : b;}
+public constfunc f32  max(f32 a,  f32 b) {return a > b ? a : b;}
+public constfunc f64  max(f64 a,  f64 b) {return a > b ? a : b;}
+
+
+public constfunc u8   min(u8 a,   u8 b)  {return a < b ? a : b;}
+public constfunc s8   min(s8 a,   s8 b)  {return a < b ? a : b;}
+public constfunc u16  min(u16 a,  u16 b) {return a < b ? a : b;}
+public constfunc s16  min(s16 a,  s16 b) {return a < b ? a : b;}
+public constfunc u32  min(u32 a,  u32 b) {return a < b ? a : b;}
+public constfunc s32  min(s32 a,  s32 b) {return a < b ? a : b;}
+public constfunc u64  min(u64 a,  u64 b) {return a < b ? a : b;}
+public constfunc s64  min(s64 a,  s64 b) {return a < b ? a : b;}
+public constfunc u128 min(u128 a, u128 b){return a < b ? a : b;}
+public constfunc s128 min(s128 a, s128 b){return a < b ? a : b;}
+public constfunc f16  min(f16 a,  f16 b) {return a < b ? a : b;}
+public constfunc f32  min(f32 a,  f32 b) {return a < b ? a : b;}
+public constfunc f64  min(f64 a,  f64 b) {return a < b ? a : b;}
 
