@@ -34,15 +34,15 @@ import parse
 # <instr> <rd>  <rs1> <rs2> <rs3>
 
 
-IMM_TKN_OFF     = 0
+IMM_TKN_OFF = 0
 GPRDEST_TKN_OFF = IMM_TKN_OFF + 4096
 FPRDEST_TKN_OFF = GPRDEST_TKN_OFF + 32
 VPRDEST_TKN_OFF = GPRDEST_TKN_OFF + 32
-GPRSRC_TKN_OFF  = GPRDEST_TKN_OFF + 32
-FPRSRC_TKN_OFF  = GPRDEST_TKN_OFF + 32
-VPRSRC_TKN_OFF  = GPRDEST_TKN_OFF + 32
-INSTR_TKN_OFF   = VPRSRC_TKN_OFF + 32
-META_TKN_OFF    = INSTR_TKN_OFF + 1024
+GPRSRC_TKN_OFF = GPRDEST_TKN_OFF + 32
+FPRSRC_TKN_OFF = GPRDEST_TKN_OFF + 32
+VPRSRC_TKN_OFF = GPRDEST_TKN_OFF + 32
+INSTR_TKN_OFF = VPRSRC_TKN_OFF + 32
+META_TKN_OFF = INSTR_TKN_OFF + 1024
 
 GPRS = ['zero', 'ra', 'sp', 'gp', 'tp', 't0', 't1', 't2', 's0', 's1', 's2', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6',
         'a7', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 't3', 't4', 't5', 't6']
@@ -70,9 +70,10 @@ INSTRS = ['lui', 'auipc', 'addi', 'slti', 'sltiu', 'xori', 'ori', 'andi', 'slli'
           'c.bnez', 'c.slli', 'c.fldsp', 'c.lwsp', 'c.flwsp', 'c.ldsp', 'c.jr', 'c.mv', 'c.ebreak', 'c.jalr', 'c.add',
           'c.fsdsp', 'c.swsp', 'c.fswsp', 'c.sdsp'
           ]
+METAS = ['PAD', 'ENCSTART', 'ENCEND', 'DECSTART', 'DECEND']
 
 formats = {
-    "lr.d": "rd,rs1",
+  "lr.d": "rd,rs1",
   "sc.d": "rd,rs1,rs2",
   "amoswap.d": "rd,rs2,(rs1)",
   "amoadd.d": "rd,rs2,(rs1)",
@@ -131,7 +132,7 @@ formats = {
   "c.fsw": "rd,uimm(rs1)",
   "c.sd": "rd,uimm(rs1)",
   "c.nop": "",
-  #"c.addi": "rd,u[12:12]|u[6:2]",
+  # "c.addi": "rd,u[12:12]|u[6:2]",
   "c.addi": "rd,imm",
   "c.jal": "offset",
   "c.addiw": "rd,imm",
@@ -279,38 +280,75 @@ formats = {
 }
 
 
+def tkn(t: str, dest=None):
+  try:
+    val = int(t, 16 if t.startswith('0x') else 10)
+    if val < 0:
+      val = 4096 + val
+    return IMM_TKN_OFF + val
+  except:
+    pass
+  if t in METAS:
+    return META_TKN_OFF + METAS.index(t)
+  assert dest is not None
+  if dest:
+    if t in GPRS:
+      return GPRDEST_TKN_OFF + GPRS.index(t)
+    elif t in FPRS:
+      return FPRDEST_TKN_OFF + FPRS.index(t)
+    elif t in VPRS:
+      return VPRDEST_TKN_OFF + VPRS.index(t)
+    else:
+      assert False
+  else:
+    if t in GPRS:
+      return GPRSRC_TKN_OFF + GPRS.index(t)
+    elif t in FPRS:
+      return FPRSRC_TKN_OFF + FPRS.index(t)
+    elif t in VPRS:
+      return VPRSRC_TKN_OFF + VPRS.index(t)
+    else:
+      assert False
+
+
+def tokenize_prog(prog: str, encoder, ctxlen):
+  '''tokenize a program for input/output into model'''
+
+  ret = [tkn('ENCSTART' if encoder else 'DECSTART')]
+  for line in prog.split('\n'):
+    ret.extend(tokenize_asm(line.strip()))
+  ret.append(tkn('ENCEND' if encoder else 'DECEND'))
+  assert ctxlen > len(ret)
+  for x in range(ctxlen - len(ret)):
+    ret.append(tkn('PAD'))
+
+  return ret
+
+
 def tokenize_asm(asm: str):
-  #str should be assembly string from say objdump -d with -M no-aliases
-  #constants are in base 10
-  #todo: support pseudo instructions
+  # str should be assembly string from say objdump -d with -M no-aliases
+  # constants are in base 10
+  # todo: support pseudo instructions
   instr, args = asm.split()
   args_fmt = formats[instr]
-  args_fmt = args_fmt.replace('rs1','{rs1}').replace('rs2','{rs2}').replace('rs3','{rs3}').replace('offset','{offset}').replace('shamt','{shamt}')
+  args_fmt = args_fmt.replace('rs1', '{rs1}').replace('rs2', '{rs2}').replace('rs3', '{rs3}').replace('offset',
+                                                                                                      '{offset}').replace(
+    'shamt', '{shamt}')
   if 'uimm' in args_fmt:
-    args_fmt = args_fmt.replace('uimm','{uimm}')
+    args_fmt = args_fmt.replace('uimm', '{uimm}')
   else:
-    args_fmt = args_fmt.replace('imm','{imm}')
-  args_fmt = args_fmt.replace('rd\'','rd')
-  args_fmt = args_fmt.replace('rd','{rd}')
-  parsed = parse.parse(args_fmt,args)
+    args_fmt = args_fmt.replace('imm', '{imm}')
+  args_fmt = args_fmt.replace('rd\'', 'rd')
+  args_fmt = args_fmt.replace('rd', '{rd}')
+  parsed = parse.parse(args_fmt, args)
   ret = [INSTR_TKN_OFF + INSTRS.index(instr)]
-  for k,v in parsed.named.items():
+  for k, v in parsed.named.items():
     if k == 'rd':
-      if v in GPRS: ret.append(GPRDEST_TKN_OFF + GPRS.index(v))
-      elif v in FPRS: ret.append(FPRDEST_TKN_OFF + GPRS.index(v))
-      elif v in VPRS: ret.append(VPRDEST_TKN_OFF + GPRS.index(v))
-      else: assert False
-    elif k in ['rs1','rs2','rs3']:
-      if v in GPRS: ret.append(GPRSRC_TKN_OFF + GPRS.index(v))
-      elif v in FPRS: ret.append(FPRSRC_TKN_OFF + GPRS.index(v))
-      elif v in VPRS: ret.append(VPRSRC_TKN_OFF + GPRS.index(v))
-      else: assert False
-    elif k in ['imm','uimm','offset','shamt']:
-      val = int(v, 16 if v.startswith('0x') else 10)
-      if val < 0:
-        val = 4096 + val
-      ret.append(val)
+      ret.append(tkn(v, True))
+    elif k in ['rs1', 'rs2', 'rs3']:
+      ret.append(tkn(v, False))
+    elif k in ['imm', 'uimm', 'offset', 'shamt']:
+      ret.append(tkn(v))
     else:
       assert False
   return parsed, ret
-
