@@ -84,7 +84,7 @@ def compile(uuid):
   return out
 
 
-from riscv_sopt import tokenize_asm, INSTRS
+from riscv_sopt import tokenize_asm, INSTRS, tokenize_prog
 INSTRS = set(INSTRS)
 
 for x in range(1000):
@@ -92,10 +92,10 @@ for x in range(1000):
   unopt = []
   if prog is None:
     continue
-  for line in prog['unopt'].split('\n'):
-    tokenized = tokenize_asm(line.strip())
+  unopt_tokenized = tokenize_prog(prog['unopt'], True, 256)
+  opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
   if x % 10 == 0:
-    for k,v in sorted(USED_INSTRS.items(),key= lambda x: x[1]):
+    for k,v in sorted(USED_INSTRS.items(), key= lambda x: x[1]):
       print(k,v)
     print("unused instrs", sorted(INSTRS - USED_INSTRS.keys()))
 
