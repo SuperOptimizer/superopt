@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.10)
 project(oneday C)
 
 
-add_compile_options(-std=gnu2x -fenable-matrix  -ffast-math -Weverything -fwrapv -fno-exceptions -fno-rtti -fpic -fPIC -fPIE -pie -fvisibility=hidden -static-pie -flto -fwhole-program -ffat-lto-objects -march=native -g  -gdwarf-4)
-add_link_options(-std=gnu2x -fenable-matrix  -ffast-math -Weverything -fwrapv -fno-exceptions -fno-rtti -fpic -fPIC -fPIE -pie -fvisibility=hidden -static-pie -flto -fwhole-program -ffat-lto-objects -march=native -g  -gdwarf-4)
+add_compile_options(-std=gnu2x -fenable-matrix  -ffast-math -Weverything -fwrapv -fno-exceptions -fno-rtti -fpic -fPIC -fPIE -pie -fvisibility=hidden -static-pie -flto -fwhole-program -ffat-lto-objects -march=native -g3)
+add_link_options(-std=gnu2x -fenable-matrix  -ffast-math -Weverything -fwrapv -fno-exceptions -fno-rtti -fpic -fPIC -fPIE -pie -fvisibility=hidden -static-pie -flto -fwhole-program -ffat-lto-objects -march=native -g3)
 
 add_compile_options(
         -Wno-unsafe-buffer-usage -Wno-c++98-compat -Wno-gnu-auto-type -Wno-declaration-after-statement -Wno-unused-parameter

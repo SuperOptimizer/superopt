@@ -29,20 +29,21 @@ import parse
 # <instr> <rd>  <rs1> <rs2>
 # <instr> <rd>  <rs1> <shamt>
 # <instr> <rd>  <rs1> <imm>
+# <instr> <rd>  <imm> <rs1>
 # <instr> <rs1> <rs2> <imm> # store types
 # <instr> <rd>  <imm[19:8]> <imm[7:0]> # lui and auipc
 # <instr> <rd>  <rs1> <rs2> <rs3>
 
 
-IMM_TKN_OFF = 0
+IMM_TKN_OFF     = 0
 GPRDEST_TKN_OFF = IMM_TKN_OFF + 4096
 FPRDEST_TKN_OFF = GPRDEST_TKN_OFF + 32
-VPRDEST_TKN_OFF = GPRDEST_TKN_OFF + 32
-GPRSRC_TKN_OFF = GPRDEST_TKN_OFF + 32
-FPRSRC_TKN_OFF = GPRDEST_TKN_OFF + 32
-VPRSRC_TKN_OFF = GPRDEST_TKN_OFF + 32
-INSTR_TKN_OFF = VPRSRC_TKN_OFF + 32
-META_TKN_OFF = INSTR_TKN_OFF + 1024
+VPRDEST_TKN_OFF = FPRDEST_TKN_OFF + 32
+GPRSRC_TKN_OFF  = VPRDEST_TKN_OFF + 32
+FPRSRC_TKN_OFF  = GPRSRC_TKN_OFF + 32
+VPRSRC_TKN_OFF  = FPRSRC_TKN_OFF + 32
+INSTR_TKN_OFF   = VPRSRC_TKN_OFF + 32
+META_TKN_OFF    = INSTR_TKN_OFF + 1024
 
 GPRS = ['zero', 'ra', 'sp', 'gp', 'tp', 't0', 't1', 't2', 's0', 's1', 's2', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6',
         'a7', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 't3', 't4', 't5', 't6']
@@ -279,6 +280,25 @@ formats = {
   "remu": "rd,rs1,rs2",
 }
 
+def detkn(t: int):
+  if IMM_TKN_OFF <= t < GPRDEST_TKN_OFF:
+    return str(t)
+  elif t < FPRDEST_TKN_OFF:
+    return GPRS[t - GPRDEST_TKN_OFF]
+  elif t < VPRDEST_TKN_OFF:
+    return FPRS[t - FPRDEST_TKN_OFF]
+  elif t < GPRSRC_TKN_OFF:
+    return VPRS[t - VPRDEST_TKN_OFF]
+  elif t < FPRSRC_TKN_OFF:
+    return GPRS[t - GPRSRC_TKN_OFF]
+  elif t < VPRSRC_TKN_OFF:
+    return FPRS[t - FPRSRC_TKN_OFF]
+  elif t < INSTR_TKN_OFF:
+    return VPRS[t - VPRSRC_TKN_OFF]
+  elif t < META_TKN_OFF:
+    return INSTRS[t - INSTR_TKN_OFF]
+  else:
+    return METAS[t - META_TKN_OFF]
 
 def tkn(t: str, dest=None):
   try:
@@ -324,22 +344,74 @@ def tokenize_prog(prog: str, encoder, ctxlen):
 
   return ret
 
+def detokenize_prog(prog: [int]):
+  ret = []
+  cur = []
+  for tkn in prog:
+    s = detkn(tkn)
+    if s in INSTRS:
+      if len(cur) > 0:
+        fmt_str = "{instr}\t" + get_fmt_str(cur[0])
+        #fmt_str has named arguments, but cur is positional without names
+        #so just replace all the named things with {}
+        fmt_str = (fmt_str.replace('{instr}','{}')
+                   .replace('{rd}','{}')
+                   .replace('{rs1}','{}')
+                   .replace('{rs2}','{}')
+                   .replace('{rs3}','{}')
+                   .replace('{shamt}','{}')
+                   .replace('{uimm}','{}')
+                   .replace('{imm}','{}')
+                   .replace('{offset}','{}'))
+        ret.append(fmt_str.format(*cur))
+        cur = [s]
+        continue
+      else:
+        cur.append(s)
+    elif s in METAS:
+      #don't need meta tokens in asm output
+      continue
+    else:
+      cur.append(s)
 
-def tokenize_asm(asm: str):
-  # str should be assembly string from say objdump -d with -M no-aliases
-  # constants are in base 10
-  # todo: support pseudo instructions
-  instr, args = asm.split()
+  fmt_str = "{instr}\t" + get_fmt_str(cur[0])
+  #fmt_str has named arguments, but cur is positional without names
+  #so just replace all the named things with {}
+  fmt_str = (fmt_str.replace('{instr}','{}')
+             .replace('{rd}','{}')
+             .replace('{rs1}','{}')
+             .replace('{rs2}','{}')
+             .replace('{rs3}','{}')
+             .replace('{shamt}','{}')
+             .replace('{uimm}','{}')
+             .replace('{imm}','{}')
+             .replace('{offset}','{}'))
+  ret.append(fmt_str.format(*cur))
+  return '\n'.join(ret)
+
+def get_fmt_str(instr):
   args_fmt = formats[instr]
-  args_fmt = args_fmt.replace('rs1', '{rs1}').replace('rs2', '{rs2}').replace('rs3', '{rs3}').replace('offset',
-                                                                                                      '{offset}').replace(
-    'shamt', '{shamt}')
+  args_fmt = (args_fmt.replace('rs1', '{rs1}')
+              .replace('rs2', '{rs2}')
+              .replace('rs3', '{rs3}')
+              .replace('offset', '{offset}')
+              .replace('shamt', '{shamt}'))
   if 'uimm' in args_fmt:
     args_fmt = args_fmt.replace('uimm', '{uimm}')
   else:
     args_fmt = args_fmt.replace('imm', '{imm}')
   args_fmt = args_fmt.replace('rd\'', 'rd')
   args_fmt = args_fmt.replace('rd', '{rd}')
+  return args_fmt
+
+
+
+def tokenize_asm(asm: str):
+  # str should be assembly string from say objdump -d with -M no-aliases
+  # constants are in base 10
+  # todo: support pseudo instructions
+  instr,args = asm.split()
+  args_fmt = get_fmt_str(instr)
   parsed = parse.parse(args_fmt, args)
   ret = [INSTR_TKN_OFF + INSTRS.index(instr)]
   for k, v in parsed.named.items():
@@ -351,4 +423,4 @@ def tokenize_asm(asm: str):
       ret.append(tkn(v))
     else:
       assert False
-  return parsed, ret
+  return ret

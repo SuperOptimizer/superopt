@@ -6,12 +6,16 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <memory.h>
-#include <math.h>
+//#include <math.h>
 
 //stdlib.h stuff
 void *malloc(size_t size);
 void free(void* ptr);
 void *realloc(void *ptr, size_t size);
+
+//math.h stuff
+float powf(float, float);
+double pow(double, double);
 
 
 #define die(msg) do{printf("%s\n",msg); exit(1)}while(0)
@@ -1384,7 +1388,7 @@ public constfunc u128 pow(u128 a, u128 b){for(int i = 0; i < b; i++) a*=a; retur
 public constfunc s128 pow(s128 a, s128 b){for(int i = 0; i < b; i++) a*=a; return a;}
 public constfunc f16  pow(f16 a,  f16 b) {return powf(a,b);}
 public constfunc f32  pow(f32 a,  f32 b) {return powf(a,b);}
-public constfunc f64  pow(f64 a,  f64 b) {return pow(a,b);}
+//public constfunc f64  pow(f64 a,  f64 b) {return pow(a,b);}
 
 
 public constfunc u8   max(u8 a,   u8 b)  {return a > b ? a : b;}
