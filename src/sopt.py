@@ -8,45 +8,72 @@ import tempfile
 
 import generate_c
 
-from pynvml import *
+from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 nvmlInit()
 
 # constants
 
+from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn
+from create_optimization_dataset import compile
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
 LEARNING_RATE = 3e-4
 GENERATE_EVERY  = 10
-NUM_TOKENS = 4200 + 2
-ENC_SEQ_LEN = 512
-DEC_SEQ_LEN = 1024 + 1
+NUM_TOKENS = NUM_TOKENS
+ENC_SEQ_LEN = 256
+DEC_SEQ_LEN = 256
 
 # helpers
 
 def cycle():
+  uuid = 0
+  prog = None
   while True:
+    while prog is None:
+      prog = compile(uuid)
 
+    #todo: support batch size > 1
+    unopt_tokenized = tokenize_prog(prog['unopt'], True, 256)
+    opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
+    mysrc_mask = []
+    for x in unopt_tokenized:
+      if x != tkn('PAD'):
+        mysrc_mask.append(True)
+      else:
+        mysrc_mask.append(False)
+
+    mytgt_mask = []
+    for x in opt_tokenized:
+      if x != tkn('PAD'):
+        mytgt_mask.append(True)
+      else:
+        mytgt_mask.append(False)
+
+
+    mysrc = torch.tensor([unopt_tokenized]).long().cuda()
+    mytgt = torch.tensor([opt_tokenized]).long().cuda()
     prefix = torch.ones((BATCH_SIZE, 1)).long().cuda()
     src = torch.randint(2, NUM_TOKENS, (BATCH_SIZE, ENC_SEQ_LEN)).long().cuda()
     tgt = torch.cat((prefix, src, src), 1)
     src_mask = torch.ones(BATCH_SIZE, src.shape[1]).bool().cuda()
-    yield (src, tgt, src_mask)
+    mysrc_mask = torch.tensor(mysrc).bool().cuda()
+    yield (mysrc, mysrc_mask, mytgt, mytgt_mask)
 
 # instantiate model
 
 model = XTransformer(
-  dim = 128*3*3*2,
+  dim = 256,
   tie_token_emb = True,
   enc_attn_flash = True,
   dec_attn_flash = True,
   return_tgt_loss = True,
   enc_num_tokens=NUM_TOKENS,
-  enc_depth = 2+2+2+2,
-  enc_heads = 2+2+2+2,
+  enc_depth = 4,
+  enc_heads = 4,
   enc_max_seq_len = ENC_SEQ_LEN,
   dec_num_tokens = NUM_TOKENS,
-  dec_depth = 2+2+2+2,
-  dec_heads = 2+2+2+2,
+  dec_depth = 4,
+  dec_heads = 4,
   dec_max_seq_len = DEC_SEQ_LEN
 ).cuda()
 
@@ -64,7 +91,7 @@ optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
   model.train()
 
-  src, tgt, src_mask = next(cycle())
+  src, src_mask, tgt, tgt_mask = next(cycle())
 
   loss = model(src, tgt, mask=src_mask)
   loss.backward()
@@ -75,12 +102,12 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
 
   if i != 0 and i % GENERATE_EVERY == 0:
     model.eval()
-    src, _, src_mask = next(cycle())
+    src, src_mask, _, _ = next(cycle())
     src, src_mask = src[:1], src_mask[:1]
-    start_tokens = (torch.ones((1, 1)) * 1).long().cuda()
-
+    #start_tokens = (torch.ones((1, 1)) * 1).long().cuda()
+    start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
     sample = model.generate(src, start_tokens, ENC_SEQ_LEN, mask = src_mask)
-    incorrects = (src != sample).abs().sum()
+    incorrects = (src != sample).sum()
 
     print(f"input:  ", src)
     print(f"predicted output:  ", sample)

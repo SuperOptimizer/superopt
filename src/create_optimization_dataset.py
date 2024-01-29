@@ -14,7 +14,7 @@ def compile(uuid):
   constants.extend([-16,-8,-4,-2,-1,0,1,2,3,4,5,8,16])
   constants = [str(x) for x in constants]
   while True:
-    func = generate_c.gen_random_func(random.randint(1,24),
+    func = generate_c.gen_random_func(random.randint(1,16),
                                         random.sample(args, random.randint(1,len(args))),
                                         random.sample(constants,random.randint(1,len(constants)//4)),
                                         ['char','unsigned char','short','unsigned short','int','unsigned int','long long','unsigned long long'],
@@ -83,21 +83,22 @@ def compile(uuid):
     out[k] = '\n'.join(disasm)
   return out
 
+if __name__ == '__main__':
 
-from riscv_sopt import tokenize_asm, INSTRS, tokenize_prog, detokenize_prog
-INSTRS = set(INSTRS)
+  from riscv_sopt import tokenize_asm, INSTRS, tokenize_prog, detokenize_prog
+  INSTRS = set(INSTRS)
 
-for x in range(100):
-  prog = compile(x)
-  unopt = []
-  if prog is None:
-    continue
-  unopt_tokenized = tokenize_prog(prog['unopt'], True, 256)
-  opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
-  detokenized = detokenize_prog(opt_tokenized)
-  if x % 10 == 0:
-    for k,v in sorted(USED_INSTRS.items(), key= lambda x: x[1]):
-      print(k,v)
-    print("unused instrs", sorted(INSTRS - USED_INSTRS.keys()))
+  for x in range(100):
+    prog = compile(x)
+    unopt = []
+    if prog is None:
+      continue
+    unopt_tokenized = tokenize_prog(prog['unopt'], True, 256)
+    opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
+    detokenized = detokenize_prog(opt_tokenized)
+    if x % 10 == 0:
+      for k,v in sorted(USED_INSTRS.items(), key= lambda x: x[1]):
+        print(k,v)
+      print("unused instrs", sorted(INSTRS - USED_INSTRS.keys()))
 
-  print(prog)
+    print(prog)

@@ -35,16 +35,6 @@ import parse
 # <instr> <rd>  <rs1> <rs2> <rs3>
 
 
-IMM_TKN_OFF     = 0
-GPRDEST_TKN_OFF = IMM_TKN_OFF + 4096
-FPRDEST_TKN_OFF = GPRDEST_TKN_OFF + 32
-VPRDEST_TKN_OFF = FPRDEST_TKN_OFF + 32
-GPRSRC_TKN_OFF  = VPRDEST_TKN_OFF + 32
-FPRSRC_TKN_OFF  = GPRSRC_TKN_OFF + 32
-VPRSRC_TKN_OFF  = FPRSRC_TKN_OFF + 32
-INSTR_TKN_OFF   = VPRSRC_TKN_OFF + 32
-META_TKN_OFF    = INSTR_TKN_OFF + 1024
-
 GPRS = ['zero', 'ra', 'sp', 'gp', 'tp', 't0', 't1', 't2', 's0', 's1', 's2', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6',
         'a7', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 't3', 't4', 't5', 't6']
 FPRS = ['ft0', 'ft1', 'ft2', 'ft3', 'ft4', 'ft5', 'ft6', 'ft7', 'fs0', 'fs1', 'fa0', 'fa1', 'fa2', 'fa3', 'fa4', 'fa5',
@@ -72,6 +62,20 @@ INSTRS = ['lui', 'auipc', 'addi', 'slti', 'sltiu', 'xori', 'ori', 'andi', 'slli'
           'c.fsdsp', 'c.swsp', 'c.fswsp', 'c.sdsp'
           ]
 METAS = ['PAD', 'ENCSTART', 'ENCEND', 'DECSTART', 'DECEND']
+
+
+IMM_TKN_OFF     = 0
+GPRDEST_TKN_OFF = IMM_TKN_OFF + 4096
+FPRDEST_TKN_OFF = GPRDEST_TKN_OFF + 32
+VPRDEST_TKN_OFF = FPRDEST_TKN_OFF + 32
+GPRSRC_TKN_OFF  = VPRDEST_TKN_OFF + 32
+FPRSRC_TKN_OFF  = GPRSRC_TKN_OFF + 32
+VPRSRC_TKN_OFF  = FPRSRC_TKN_OFF + 32
+INSTR_TKN_OFF   = VPRSRC_TKN_OFF + 32
+META_TKN_OFF    = INSTR_TKN_OFF + 1024
+
+
+NUM_TOKENS = META_TKN_OFF + len(METAS)
 
 formats = {
   "lr.d": "rd,rs1",
@@ -333,11 +337,11 @@ def tkn(t: str, dest=None):
 
 def tokenize_prog(prog: str, encoder, ctxlen):
   '''tokenize a program for input/output into model'''
-
-  ret = [tkn('ENCSTART' if encoder else 'DECSTART')]
+  ret = [] if encoder else [tkn('DECSTART')]
+  #ret = [tkn('ENCSTART' if encoder else 'DECSTART')]
   for line in prog.split('\n'):
     ret.extend(tokenize_asm(line.strip()))
-  ret.append(tkn('ENCEND' if encoder else 'DECEND'))
+  #ret.append(tkn('ENCEND' if encoder else 'DECEND'))
   assert ctxlen > len(ret)
   for x in range(ctxlen - len(ret)):
     ret.append(tkn('PAD'))
