@@ -56,12 +56,8 @@ def cycle():
 
     mysrc = torch.tensor([unopt_tokenized]).long().cuda()
     mytgt = torch.tensor([opt_tokenized]).long().cuda()
-    prefix = torch.ones((BATCH_SIZE, 1)).long().cuda()
-    src = torch.randint(2, NUM_TOKENS, (BATCH_SIZE, ENC_SEQ_LEN)).long().cuda()
-    tgt = torch.cat((prefix, src, src), 1)
-    src_mask = torch.ones(BATCH_SIZE, src.shape[1]).bool().cuda()
-    mysrc_mask_ = torch.tensor([mysrc_mask]).bool().cuda()
-    yield (mysrc, mysrc_mask_, mytgt, mytgt_mask)
+    mysrc_mask = torch.tensor([mysrc_mask]).bool().cuda()
+    yield (mysrc, mysrc_mask, mytgt, mytgt_mask)
 
 # instantiate model
 
@@ -116,7 +112,6 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     print(f"input:  ", src)
     print(f"predicted output:  ", sample)
     print(f"incorrects: {incorrects}")
-
 
     h = nvmlDeviceGetHandleByIndex(0)
     info = nvmlDeviceGetMemoryInfo(h)
