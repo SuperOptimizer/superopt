@@ -14,7 +14,7 @@ def compile(uuid):
   constants.extend([-16,-8,-4,-2,-1,0,1,2,3,4,5,8,16])
   constants = [str(x) for x in constants]
   while True:
-    func = generate_c.gen_random_func(random.randint(1,16),
+    func = generate_c.gen_random_func(random.randint(1,10),
                                         random.sample(args, random.randint(1,len(args))),
                                         random.sample(constants,random.randint(1,len(constants)//4)),
                                         ['char','unsigned char','short','unsigned short','int','unsigned int','long long','unsigned long long'],
@@ -68,6 +68,9 @@ def compile(uuid):
           #convert hex imm to decimal
           imm = asm.split(',')[1]
           newimm = int(imm,16)
+          if newimm > 4096:
+            #lui can have values > 4096 which we don't support yet so just return None
+            return None
           asm = asm.replace(imm,str(newimm))
         if instr in ['beq','bne','blt','bge','bltu','bgeu','c.beqz','c.bnez', 'c.j']:
           # objdump AFAICT only dumps absolute dump addresses but the instruction is encoded as a relative address

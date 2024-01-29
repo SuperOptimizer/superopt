@@ -420,11 +420,17 @@ def tokenize_asm(asm: str):
   ret = [INSTR_TKN_OFF + INSTRS.index(instr)]
   for k, v in parsed.named.items():
     if k == 'rd':
-      ret.append(tkn(v, True))
+      t = tkn(v, True)
+      assert t < 5200
+      ret.append(t)
     elif k in ['rs1', 'rs2', 'rs3']:
-      ret.append(tkn(v, False))
+      t = tkn(v, False)
+      assert t < 5200
+      ret.append(t)
     elif k in ['imm', 'uimm', 'offset', 'shamt']:
-      ret.append(tkn(v))
+      t =tkn(v)
+      assert t < 5200
+      ret.append(t)
     else:
       assert False
   return ret

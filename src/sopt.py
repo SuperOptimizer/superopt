@@ -20,8 +20,8 @@ BATCH_SIZE = 1
 LEARNING_RATE = 3e-4
 GENERATE_EVERY  = 10
 NUM_TOKENS = NUM_TOKENS
-ENC_SEQ_LEN = 256
-DEC_SEQ_LEN = 256
+ENC_SEQ_LEN = 200
+DEC_SEQ_LEN = 200
 
 # helpers
 
@@ -33,9 +33,13 @@ def cycle():
       prog = compile(uuid)
 
     #todo: support batch size > 1
-    unopt_tokenized = tokenize_prog(prog['unopt'], True, 256)
-    opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
+    unopt_tokenized = tokenize_prog(prog['unopt'], True, 200)
+    opt_tokenized   = tokenize_prog(prog['opt'],  False, 200)
     mysrc_mask = []
+    for token in unopt_tokenized:
+      assert token <= 5315
+    for token in opt_tokenized:
+      assert token <= 5315
     for x in unopt_tokenized:
       if x != tkn('PAD'):
         mysrc_mask.append(True)
@@ -56,8 +60,8 @@ def cycle():
     src = torch.randint(2, NUM_TOKENS, (BATCH_SIZE, ENC_SEQ_LEN)).long().cuda()
     tgt = torch.cat((prefix, src, src), 1)
     src_mask = torch.ones(BATCH_SIZE, src.shape[1]).bool().cuda()
-    mysrc_mask = torch.tensor(mysrc).bool().cuda()
-    yield (mysrc, mysrc_mask, mytgt, mytgt_mask)
+    mysrc_mask_ = torch.tensor([mysrc_mask]).bool().cuda()
+    yield (mysrc, mysrc_mask_, mytgt, mytgt_mask)
 
 # instantiate model
 
@@ -92,7 +96,7 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
   model.train()
 
   src, src_mask, tgt, tgt_mask = next(cycle())
-
+  #print(src,tgt,src_mask)
   loss = model(src, tgt, mask=src_mask)
   loss.backward()
   print(f'{i}: {loss.item()}')
