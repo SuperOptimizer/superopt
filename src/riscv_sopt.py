@@ -342,7 +342,11 @@ def tokenize_prog(prog: str, encoder, ctxlen):
   for line in prog.split('\n'):
     ret.extend(tokenize_asm(line.strip()))
   #ret.append(tkn('ENCEND' if encoder else 'DECEND'))
-  assert ctxlen > len(ret)
+  if ctxlen < len(ret):
+    print(f"got {len(ret)} tokens but only {ctxlen} context length")
+    return None
+  else:
+    print(f"got {len(ret)} tokens ")
   for x in range(ctxlen - len(ret)):
     ret.append(tkn('PAD'))
 

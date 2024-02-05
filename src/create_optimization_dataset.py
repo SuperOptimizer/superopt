@@ -14,7 +14,7 @@ def compile(uuid):
   constants.extend([-16,-8,-4,-2,-1,0,1,2,3,4,5,8,16])
   constants = [str(x) for x in constants]
   while True:
-    func = generate_c.gen_random_func(random.randint(1,10),
+    func = generate_c.gen_random_func(random.randint(32,64),
                                         random.sample(args, random.randint(1,len(args))),
                                         random.sample(constants,random.randint(1,len(constants)//4)),
                                         ['char','unsigned char','short','unsigned short','int','unsigned int','long long','unsigned long long'],
@@ -84,6 +84,9 @@ def compile(uuid):
         disasm.append(asm)
     k = 'unopt' if listing == unopt_disasm else 'opt'
     out[k] = '\n'.join(disasm)
+  os.remove(f'/tmp/sopt/func{uuid}_opt.o')
+  os.remove(f'/tmp/sopt/func{uuid}_unopt.o')
+  os.remove(f'/tmp/sopt/func{uuid}.c')
   return out
 
 if __name__ == '__main__':
