@@ -8,6 +8,7 @@ import tempfile
 import generate_c
 import gzip
 import csv
+import multiprocessing
 
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 nvmlInit()
@@ -31,50 +32,57 @@ def optim_db_save(c_code:str, unopt:list, opt:list):
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writerow({'c':c_code,'unopt':unopt[:unopt.index(tkn('PAD'))],'opt':opt[:opt.index(tkn('PAD'))]})
 
+def func(uuid):
+  while True:
+    prog = None
+    while prog is None:
+      prog = compile(uuid)
+    unopt_tokenized = tokenize_prog(prog['unopt'], True, 512)
+    if unopt_tokenized is None:
+      prog = None
+      continue
+    opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
+    if opt_tokenized is None:
+      prog = None
+      continue
+
+    mysrc_mask = []
+    for x in unopt_tokenized:
+      if x != tkn('PAD'):
+        mysrc_mask.append(True)
+      else:
+        mysrc_mask.append(False)
+
+    mytgt_mask = []
+    for x in opt_tokenized:
+      if x != tkn('PAD'):
+        mytgt_mask.append(True)
+      else:
+        mytgt_mask.append(False)
+
+    mysrc = torch.tensor([unopt_tokenized]).long()
+    mytgt = torch.tensor([opt_tokenized]).long()
+    mysrc_mask = torch.tensor([mysrc_mask]).bool()
+
+    return prog,unopt_tokenized,opt_tokenized,mysrc,mysrc_mask,mytgt
+
+def getbatch(batchsize, uuid):
+  with multiprocessing.Pool(batchsize) as p:
+    ret = p.map(func, list(range(uuid,uuid+batchsize)))
+  return ret
 
 
 def cycle():
   uuid = 0
   prog = None
+
   while True:
-    batch = []
-    while len(batch) < BATCH_SIZE:
-      while prog is None:
-        prog = compile(uuid)
-      unopt_tokenized = tokenize_prog(prog['unopt'], True, 512)
-      if unopt_tokenized is None:
-        prog = None
-        continue
-      opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
-      if opt_tokenized is None:
-        prog = None
-        continue
-      uuid+=1
-      mysrc_mask = []
-      optim_db_save(prog,unopt_tokenized,opt_tokenized)
+    batch = getbatch(BATCH_SIZE, uuid)
+    uuid += BATCH_SIZE
 
-      for x in unopt_tokenized:
-        if x != tkn('PAD'):
-          mysrc_mask.append(True)
-        else:
-          mysrc_mask.append(False)
-
-      mytgt_mask = []
-      for x in opt_tokenized:
-        if x != tkn('PAD'):
-          mytgt_mask.append(True)
-        else:
-          mytgt_mask.append(False)
-
-      mysrc = torch.tensor([unopt_tokenized]).long().cuda()
-      mytgt = torch.tensor([opt_tokenized]).long().cuda()
-      mysrc_mask = torch.tensor([mysrc_mask]).bool().cuda()
-      batch.append([mysrc,mysrc_mask,mytgt])
-      prog=None
-
-    mysrc = torch.cat(list(x[0] for x in batch), dim=0)
-    mysrc_mask = torch.cat(list(x[1] for x in batch), dim=0)
-    mytgt = torch.cat(list(x[2] for x in batch), dim=0)
+    mysrc = torch.cat(list(x[3] for x in batch), dim=0).cuda()
+    mysrc_mask = torch.cat(list(x[4] for x in batch), dim=0).cuda()
+    mytgt = torch.cat(list(x[5] for x in batch), dim=0).cuda()
     yield (mysrc, mysrc_mask, mytgt)
 
 # instantiate model

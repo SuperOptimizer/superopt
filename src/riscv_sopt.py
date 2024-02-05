@@ -346,7 +346,7 @@ def tokenize_prog(prog: str, encoder, ctxlen):
     print(f"got {len(ret)} tokens but only {ctxlen} context length")
     return None
   else:
-    print(f"got {len(ret)} tokens ")
+    print(f"{'encoder' if encoder else 'decoder'} got {len(ret)} tokens ")
   for x in range(ctxlen - len(ret)):
     ret.append(tkn('PAD'))
 
