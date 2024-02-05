@@ -16,7 +16,7 @@ nvmlInit()
 from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn
 from create_optimization_dataset import compile
 NUM_BATCHES = int(1e5)
-BATCH_SIZE = 1
+BATCH_SIZE = 32
 LEARNING_RATE = 3e-4
 GENERATE_EVERY  = 10
 NUM_TOKENS = NUM_TOKENS
@@ -29,35 +29,36 @@ def cycle():
   uuid = 0
   prog = None
   while True:
-    while prog is None:
-      prog = compile(uuid)
+    batch = []
+    while len(batch) < BATCH_SIZE:
+      while prog is None:
+        prog = compile(uuid)
+      unopt_tokenized = tokenize_prog(prog['unopt'], True, 200)
+      opt_tokenized   = tokenize_prog(prog['opt'],  False, 200)
+      mysrc_mask = []
 
-    #todo: support batch size > 1
-    unopt_tokenized = tokenize_prog(prog['unopt'], True, 200)
-    opt_tokenized   = tokenize_prog(prog['opt'],  False, 200)
-    mysrc_mask = []
-    for token in unopt_tokenized:
-      assert token <= 5315
-    for token in opt_tokenized:
-      assert token <= 5315
-    for x in unopt_tokenized:
-      if x != tkn('PAD'):
-        mysrc_mask.append(True)
-      else:
-        mysrc_mask.append(False)
+      for x in unopt_tokenized:
+        if x != tkn('PAD'):
+          mysrc_mask.append(True)
+        else:
+          mysrc_mask.append(False)
 
-    mytgt_mask = []
-    for x in opt_tokenized:
-      if x != tkn('PAD'):
-        mytgt_mask.append(True)
-      else:
-        mytgt_mask.append(False)
+      mytgt_mask = []
+      for x in opt_tokenized:
+        if x != tkn('PAD'):
+          mytgt_mask.append(True)
+        else:
+          mytgt_mask.append(False)
 
+      mysrc = torch.tensor([unopt_tokenized]).long().cuda()
+      mytgt = torch.tensor([opt_tokenized]).long().cuda()
+      mysrc_mask = torch.tensor([mysrc_mask]).bool().cuda()
+      batch.append([mysrc,mysrc_mask,mytgt])
 
-    mysrc = torch.tensor([unopt_tokenized]).long().cuda()
-    mytgt = torch.tensor([opt_tokenized]).long().cuda()
-    mysrc_mask = torch.tensor([mysrc_mask]).bool().cuda()
-    yield (mysrc, mysrc_mask, mytgt, mytgt_mask)
+    mysrc = torch.cat(list(x[0] for x in batch), dim=0)
+    mysrc_mask = torch.cat(list(x[1] for x in batch), dim=0)
+    mytgt = torch.cat(list(x[2] for x in batch), dim=0)
+    yield (mysrc, mysrc_mask, mytgt)
 
 # instantiate model
 
@@ -91,7 +92,7 @@ optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
   model.train()
 
-  src, src_mask, tgt, tgt_mask = next(cycle())
+  src, src_mask, tgt = next(cycle())
   #print(src,tgt,src_mask)
   loss = model(src, tgt, mask=src_mask)
   loss.backward()
@@ -102,7 +103,7 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
 
   if i != 0 and i % GENERATE_EVERY == 0:
     model.eval()
-    src, src_mask, _, _ = next(cycle())
+    src, src_mask, _ = next(cycle())
     src, src_mask = src[:1], src_mask[:1]
     #start_tokens = (torch.ones((1, 1)) * 1).long().cuda()
     start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
