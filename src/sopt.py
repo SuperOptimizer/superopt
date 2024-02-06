@@ -15,17 +15,18 @@ nvmlInit()
 
 # constants
 
-from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn
+from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn, constprop_gen, detokenize_prog
 from create_optimization_dataset import compile
 NUM_BATCHES = int(1e5)
-BATCH_SIZE = 16
-LEARNING_RATE = 3e-4
+BATCH_SIZE = 8
+LEARNING_RATE = 9e-4
 GENERATE_EVERY  = 2
 NUM_TOKENS = NUM_TOKENS
-ENC_SEQ_LEN = 512
-DEC_SEQ_LEN = 256
+ENC_SEQ_LEN = 64
+DEC_SEQ_LEN = 16
 
 # helpers
+
 
 def optim_db_save(c_code:str, unopt:list, opt:list):
   with open('/tmp/sopt/db.csv','a+') as f:
@@ -36,12 +37,13 @@ def func(uuid):
   while True:
     prog = None
     while prog is None:
-      prog = compile(uuid)
-    unopt_tokenized = tokenize_prog(prog['unopt'], True, 512)
+      #prog = compile(uuid)
+      prog = constprop_gen()
+    unopt_tokenized = tokenize_prog(prog['unopt'], True, 64)
     if unopt_tokenized is None:
       prog = None
       continue
-    opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
+    opt_tokenized   = tokenize_prog(prog['opt'],  False, 16)
     if opt_tokenized is None:
       prog = None
       continue
@@ -127,18 +129,25 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
   optim.zero_grad()
 
   if i != 0 and i % GENERATE_EVERY == 0:
-    torch.save({'epoch':i, 'model_state_dict':model.state_dict(),'optimizer_state_dict':optim.state_dict(),'loss':loss.item()}, f'/tmp/sopt/checkpoint_{i}.pt')
+    #torch.save({'epoch':i, 'model_state_dict':model.state_dict(),'optimizer_state_dict':optim.state_dict(),'loss':loss.item()}, f'/tmp/sopt/checkpoint_{i}.pt')
     model.eval()
     src, src_mask, tgt = next(cycle())
     src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
     #start_tokens = (torch.ones((1, 1)) * 1).long().cuda()
     start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
     sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
+
+    #the target output always includes the 'DECSTART' token whereas the sampled output does not
+    #so shift the output left one token to delete it
+    for x in range(DEC_SEQ_LEN-1):
+      tgt[0,x] = tgt[0,x+1]
     incorrects = (tgt != sample).sum()
 
-    print(f"input:  ", src)
-    print(f"predicted output:  ", sample)
-    print(f"actual output:  ", tgt)
+    print(f"input:  ", detokenize_prog(src.tolist()[0]))
+    print(f"predicted tokens:  ", sample.tolist())
+    print(f"actual tokens:     ", tgt.tolist()[0])
+    print(f"predicted asm:  ", detokenize_prog(sample.tolist()))
+    print(f"actual asm:     ", detokenize_prog(tgt.tolist()[0]))
     print(f"incorrects: {incorrects}")
 
     h = nvmlDeviceGetHandleByIndex(0)

@@ -1,5 +1,5 @@
 import parse
-
+import random
 # riscv transformer optimizer RISCVSopt
 # RISCVSopt is a transformer based optimzier for riscv. riscv instructions are translated into a series of tokens
 # and riscvsopt outputs an optimized sequence of instructions
@@ -300,7 +300,10 @@ def detkn(t: int):
   elif t < INSTR_TKN_OFF:
     return VPRS[t - VPRSRC_TKN_OFF]
   elif t < META_TKN_OFF:
-    return INSTRS[t - INSTR_TKN_OFF]
+    try:
+      return INSTRS[t - INSTR_TKN_OFF]
+    except:
+      return f"invalid_instr{t}"
   else:
     return METAS[t - META_TKN_OFF]
 
@@ -346,7 +349,8 @@ def tokenize_prog(prog: str, encoder, ctxlen):
     print(f"got {len(ret)} tokens but only {ctxlen} context length")
     return None
   else:
-    print(f"{'encoder' if encoder else 'decoder'} got {len(ret)} tokens ")
+    pass
+    #print(f"{'encoder' if encoder else 'decoder'} got {len(ret)} tokens ")
   for x in range(ctxlen - len(ret)):
     ret.append(tkn('PAD'))
 
@@ -371,7 +375,10 @@ def detokenize_prog(prog: [int]):
                    .replace('{uimm}','{}')
                    .replace('{imm}','{}')
                    .replace('{offset}','{}'))
-        ret.append(fmt_str.format(*cur))
+        try:
+          ret.append(fmt_str.format(*cur))
+        except:
+          ret.append(f"invalid{cur}")
         cur = [s]
         continue
       else:
@@ -381,8 +388,11 @@ def detokenize_prog(prog: [int]):
       continue
     else:
       cur.append(s)
-
-  fmt_str = "{instr}\t" + get_fmt_str(cur[0])
+  #cur[0] _should_ be an instruction but if the network is bad then it may generate illegal code and cur[0] won't be a valid instruction
+  try:
+    fmt_str = "{instr}\t" + get_fmt_str(cur[0])
+  except:
+    fmt_str = f"invalid{cur}"
   #fmt_str has named arguments, but cur is positional without names
   #so just replace all the named things with {}
   fmt_str = (fmt_str.replace('{instr}','{}')
@@ -394,11 +404,17 @@ def detokenize_prog(prog: [int]):
              .replace('{uimm}','{}')
              .replace('{imm}','{}')
              .replace('{offset}','{}'))
-  ret.append(fmt_str.format(*cur))
+  try:
+    ret.append(fmt_str.format(*cur))
+  except:
+    ret.append(f"invalid {cur}")
   return '\n'.join(ret)
 
 def get_fmt_str(instr):
-  args_fmt = formats[instr]
+  try:
+    args_fmt = formats[instr]
+  except:
+    return f'invalid{instr}'
   args_fmt = (args_fmt.replace('rs1', '{rs1}')
               .replace('rs2', '{rs2}')
               .replace('rs3', '{rs3}')
@@ -412,6 +428,32 @@ def get_fmt_str(instr):
   args_fmt = args_fmt.replace('rd', '{rd}')
   return args_fmt
 
+def constprop_gen():
+  #generate data to teach constant propagation
+  #e.g.
+  # c.addiw a0,1
+  # c.addiw a0,1
+  # c.jr ra
+  # to
+  # c.addiw a0,2
+  # c.jr, ra
+
+  constants = []
+  for x in range(random.randint(2,15)):
+    constants.append(random.randint(0,(2047-sum(constants))//2))
+
+  rd = random.choice(GPRS)
+  stmts = []
+  for constant in constants:
+    if 0 < constant <= 31:
+      stmts.append(f'c.addiw\t{rd},{constant}')
+    elif 32 <= constant <= 2047:
+      stmts.append(f'addiw\t{rd},{rd},{constant}')
+  random.shuffle(stmts)
+  out = dict()
+  out['unopt'] = '\n'.join(stmts)
+  out['opt'] = f'addiw\t{rd},{rd},{sum(constants)}'
+  return out
 
 
 def tokenize_asm(asm: str):
