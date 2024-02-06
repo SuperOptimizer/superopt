@@ -14,7 +14,7 @@ def compile(uuid):
   constants.extend([-16,-8,-4,-2,-1,0,1,2,3,4,5,8,16])
   constants = [str(x) for x in constants]
   while True:
-    func = generate_c.gen_random_func(random.randint(32,64),
+    func = generate_c.gen_random_func(random.randint(8,32),
                                         random.sample(args, random.randint(1,len(args))),
                                         random.sample(constants,random.randint(1,len(constants)//4)),
                                         ['char','unsigned char','short','unsigned short','int','unsigned int','long long','unsigned long long'],

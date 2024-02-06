@@ -20,10 +20,10 @@ from create_optimization_dataset import compile
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 8
 LEARNING_RATE = 9e-4
-GENERATE_EVERY  = 2
+GENERATE_EVERY  = 10
 NUM_TOKENS = NUM_TOKENS
-ENC_SEQ_LEN = 64
-DEC_SEQ_LEN = 16
+ENC_SEQ_LEN = 256
+DEC_SEQ_LEN = 128
 
 # helpers
 
@@ -37,13 +37,13 @@ def func(uuid):
   while True:
     prog = None
     while prog is None:
-      #prog = compile(uuid)
-      prog = constprop_gen()
-    unopt_tokenized = tokenize_prog(prog['unopt'], True, 64)
+      prog = compile(uuid)
+      #prog = constprop_gen()
+    unopt_tokenized = tokenize_prog(prog['unopt'], True, ENC_SEQ_LEN)
     if unopt_tokenized is None:
       prog = None
       continue
-    opt_tokenized   = tokenize_prog(prog['opt'],  False, 16)
+    opt_tokenized   = tokenize_prog(prog['opt'],  False, DEC_SEQ_LEN)
     if opt_tokenized is None:
       prog = None
       continue
@@ -90,18 +90,18 @@ def cycle():
 # instantiate model
 
 model = XTransformer(
-  dim = 256,
+  dim = 1024,
   tie_token_emb = True,
   enc_attn_flash = True,
   dec_attn_flash = True,
   return_tgt_loss = True,
   enc_num_tokens=NUM_TOKENS,
-  enc_depth = 4,
-  enc_heads = 4,
+  enc_depth = 8,
+  enc_heads = 8,
   enc_max_seq_len = ENC_SEQ_LEN,
   dec_num_tokens = NUM_TOKENS,
-  dec_depth = 4,
-  dec_heads = 4,
+  dec_depth = 8,
+  dec_heads = 8,
   dec_max_seq_len = DEC_SEQ_LEN
 ).cuda()
 
