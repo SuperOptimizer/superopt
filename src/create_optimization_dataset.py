@@ -22,8 +22,8 @@ def compile(uuid):
     #func = 'int func(int a, int b, int c){return 1 >> 100;}'
     with open(f'/tmp/sopt/func{uuid}.c', 'w+') as f:
       f.write(func)
-    ret_unopt = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_unopt.o -O0 -Wall -c'.split(), capture_output=True)
-    ret_opt = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_opt.o -O3 -Wall -c'.split(), capture_output=True)
+    ret_unopt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_unopt.o -O0 -Wall -c'.split(), capture_output=True)
+    ret_opt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_opt.o -O3 -Wall -c'.split(), capture_output=True)
     if len(ret_opt.stderr) > 0 or len(ret_unopt.stderr) > 0:
       #generated code had UB so nothing
       continue
@@ -31,11 +31,11 @@ def compile(uuid):
       break
 
   #strip because symbols get in the way of parsing
-  stripped_unopt = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-strip /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
-  stripped_opt = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-strip /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
+  stripped_unopt = subprocess.run(f'riscv64-linux-gnu-strip /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
+  stripped_opt = subprocess.run(f'riscv64-linux-gnu-strip /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
 
-  unopt_listing = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
-  opt_listing = subprocess.run(f'/opt/riscv/bin/riscv64-unknown-elf-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
+  unopt_listing = subprocess.run(f'riscv64-linux-gnu-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
+  opt_listing = subprocess.run(f'riscv64-linux-gnu-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
 
   unopt_disasm = unopt_listing.stdout.decode('ascii')
   opt_disasm = opt_listing.stdout.decode('ascii')

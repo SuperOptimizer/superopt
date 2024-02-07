@@ -23,11 +23,30 @@ from create_optimization_dataset import compile
 
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 8
-LEARNING_RATE = 9e-4
+LEARNING_RATE = 3e-4
 GENERATE_EVERY  = 10
 NUM_TOKENS = NUM_TOKENS
 ENC_SEQ_LEN = 256
 DEC_SEQ_LEN = 128
+
+if '2060' in torch.cuda.get_device_name():
+  DIM = 512
+  BATCH_SIZE = 8
+  GENERATE_EVERY = 10
+  ENC_DEPTH = 4
+  ENC_HEADS = 4
+  DEC_DEPTH = 4
+  DEP_HEADS = 4
+elif '4090' in torch.cuda.get_device_name():
+  DIM = 1024
+  BATCH_SIZE = 64
+  GENERATE_EVERY = 200
+  ENC_DEPTH = 8
+  ENC_HEADS = 8
+  DEC_DEPTH = 8
+  DEP_HEADS = 8
+else:
+  assert False
 
 
 def getsize(obj):
@@ -140,18 +159,18 @@ def main():
   nvmlInit()
 
   model = XTransformer(
-    dim = 512,
+    dim = DIM,
     tie_token_emb = True,
     enc_attn_flash = True,
     dec_attn_flash = True,
     return_tgt_loss = True,
     enc_num_tokens=NUM_TOKENS,
-    enc_depth = 4,
-    enc_heads = 4,
+    enc_depth = ENC_DEPTH,
+    enc_heads = ENC_HEADS,
     enc_max_seq_len = ENC_SEQ_LEN,
     dec_num_tokens = NUM_TOKENS,
-    dec_depth = 4,
-    dec_heads = 4,
+    dec_depth = ENC_DEPTH,
+    dec_heads = ENC_HEADS,
     dec_max_seq_len = DEC_SEQ_LEN
   ).cuda()
 
