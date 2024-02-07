@@ -94,11 +94,7 @@ def func(uuid):
       else:
         mytgt_mask.append(False)
 
-    mysrc = torch.tensor([unopt_tokenized]).long()
-    mytgt = torch.tensor([opt_tokenized]).long()
-    mysrc_mask = torch.tensor([mysrc_mask]).bool()
-
-    return prog,unopt_tokenized,opt_tokenized,mysrc,mysrc_mask,mytgt
+    return unopt_tokenized,opt_tokenized,mysrc_mask
 
 
 training_data = []
@@ -133,9 +129,9 @@ def cycle():
     batch = getbatch(BATCH_SIZE, uuid)
     uuid += BATCH_SIZE
 
-    mysrc = torch.cat(list(x[3] for x in batch), dim=0).cuda()
-    mysrc_mask = torch.cat(list(x[4] for x in batch), dim=0).cuda()
-    mytgt = torch.cat(list(x[5] for x in batch), dim=0).cuda()
+    mysrc = torch.tensor(list(x[0] for x in batch)).long().cuda()
+    mytgt = torch.tensor(list(x[1] for x in batch)).long().cuda()
+    mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().cuda()
     yield (mysrc, mysrc_mask, mytgt)
 
 # instantiate model
