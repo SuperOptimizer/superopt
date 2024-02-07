@@ -182,20 +182,24 @@ def main():
   # optimizer
 
   optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
+  scaler = torch.cuda.amp.GradScaler()
   # training
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
+    optim.zero_grad()
 
     src, src_mask, tgt = next(cycle())
     #print(src,tgt,src_mask)
-    loss = model(src, tgt, mask=src_mask)
-    loss.backward()
+    with torch.cuda.amp.autocast(dtype=torch.float16):
+      loss = model(src, tgt, mask=src_mask)
+    #loss.backward()
+    scaler.scale(loss).backward()
+    scaler.step(optim)
+    scaler.update()
     print(f'{i}: {loss.item()}')
 
-    optim.step()
-    optim.zero_grad()
+    #optim.step()
 
     if i != 0 and i % GENERATE_EVERY == 0:
       #torch.save({'epoch':i, 'model_state_dict':model.state_dict(),'optimizer_state_dict':optim.state_dict(),'loss':loss.item()}, f'/tmp/sopt/checkpoint_{i}.pt')
