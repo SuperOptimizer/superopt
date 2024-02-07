@@ -22,10 +22,7 @@ from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn, constprop_gen, detokenize
 from create_optimization_dataset import compile
 
 NUM_BATCHES = int(1e5)
-BATCH_SIZE = 8
 LEARNING_RATE = 3e-4
-GENERATE_EVERY  = 10
-NUM_TOKENS = NUM_TOKENS
 ENC_SEQ_LEN = 256
 DEC_SEQ_LEN = 128
 
@@ -37,6 +34,7 @@ if '2060' in torch.cuda.get_device_name():
   ENC_HEADS = 4
   DEC_DEPTH = 4
   DEP_HEADS = 4
+  DTYPE=torch.float16
 elif '4090' in torch.cuda.get_device_name():
   DIM = 1024
   BATCH_SIZE = 64
@@ -45,6 +43,7 @@ elif '4090' in torch.cuda.get_device_name():
   ENC_HEADS = 8
   DEC_DEPTH = 8
   DEP_HEADS = 8
+  DTYPE=torch.bfloat16
 else:
   assert False
 
@@ -191,7 +190,7 @@ def main():
 
     src, src_mask, tgt = next(cycle())
     #print(src,tgt,src_mask)
-    with torch.cuda.amp.autocast(dtype=torch.float16):
+    with torch.cuda.amp.autocast(dtype=DTYPE):
       loss = model(src, tgt, mask=src_mask)
     #loss.backward()
     scaler.scale(loss).backward()
