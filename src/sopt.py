@@ -114,21 +114,9 @@ def getbatch(batchsize, uuid):
   global training_data, async_result, pool
   # Check if training_data is empty to decide whether to wait for the async operation
   if len(training_data) == 0:
-    if async_result is not None:
-      # Wait for the current asynchronous operation to finish
-      training_data = async_result.get()
-      print("Training data size", getsize(training_data))
-      # Reset async_result to None to indicate the async operation has completed
-      async_result = None
-    else:
-      # If there's no ongoing async operation, initiate one and wait
+    if async_result is None:
       initiate_async_call(batchsize)
-      training_data = async_result.get()
-      print("Training data size", getsize(training_data))
-      async_result = None
-
-  # If training_data is not enough for the next call, initiate another async call
-  if len(training_data) < batchsize and async_result is None:
+    training_data = async_result.get()
     initiate_async_call(batchsize)
 
   # Retrieve the required batch from training_data
