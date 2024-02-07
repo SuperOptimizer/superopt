@@ -152,7 +152,6 @@ def cycle():
     mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().cuda()
     yield (mysrc, mysrc_mask, mytgt)
 
-# instantiate model
 @timeit
 def main():
   nvmlInit()
@@ -201,7 +200,12 @@ def main():
     #optim.step()
 
     if i != 0 and i % GENERATE_EVERY == 0:
-      #torch.save({'epoch':i, 'model_state_dict':model.state_dict(),'optimizer_state_dict':optim.state_dict(),'loss':loss.item()}, f'/tmp/sopt/checkpoint_{i}.pt')
+      torch.save({'epoch':i,
+                  'model_state_dict':model.state_dict(),
+                  'optimizer_state_dict':optim.state_dict(),
+                  'loss':loss.item(),
+                  'scaler':scaler.state_dict()},
+                 f'/tmp/sopt/checkpoint.pt')
       model.eval()
       src, src_mask, tgt = next(cycle())
       src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
@@ -230,3 +234,5 @@ def main():
 
 if __name__ == '__main__':
   main()
+  pool.close()
+  pool.terminate()
