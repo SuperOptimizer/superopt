@@ -35,7 +35,7 @@ if '2060' in torch.cuda.get_device_name():
   DEC_DEPTH = 4
   DEP_HEADS = 4
   DTYPE=torch.float16
-elif '4090' in torch.cuda.get_device_name():
+elif '4090' in torch.cuda.get_device_name() or 'A5000' in torch.cuda.get_device_name():
   DIM = 1024
   BATCH_SIZE = 64
   GENERATE_EVERY = 200
