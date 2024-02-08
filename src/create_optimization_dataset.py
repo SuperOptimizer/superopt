@@ -7,24 +7,26 @@ from collections import defaultdict
 
 USED_INSTRS = defaultdict(lambda: 0)
 
-def compile(uuid):
+def compile(args):
+  uuid,min_tokens,max_tokens = args
   args = ['a','b','c','d','e','f']
   args = ['*' +a if random.randint(1,2)==1 else '' + a for a in args]
   constants = random.sample(range(-2048,2047),8)
   constants.extend([-16,-8,-4,-2,-1,0,1,2,3,4,5,8,16])
   constants = [str(x) for x in constants]
   while True:
-    func = generate_c.gen_random_func(random.randint(8,32),
+    func = generate_c.gen_random_func(random.randint(min_tokens,max_tokens),
                                         random.sample(args, random.randint(1,len(args))),
                                         random.sample(constants,random.randint(1,len(constants)//4)),
                                         ['char','unsigned char','short','unsigned short','int','unsigned int','long long','unsigned long long'],
                                         f'func_{uuid}')
-    #func = 'int func(int a, int b, int c){return 1 >> 100;}'
+
     with open(f'/tmp/sopt/func{uuid}.c', 'w+') as f:
       f.write(func)
     ret_unopt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_unopt.o -O0 -Wall -c'.split(), capture_output=True)
     ret_opt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_opt.o -O3 -Wall -c'.split(), capture_output=True)
     if len(ret_opt.stderr) > 0 or len(ret_unopt.stderr) > 0:
+      #print("UB in generated code")
       #generated code had UB so nothing
       continue
     else:
@@ -84,9 +86,18 @@ def compile(uuid):
         disasm.append(asm)
     k = 'unopt' if listing == unopt_disasm else 'opt'
     out[k] = '\n'.join(disasm)
-  os.remove(f'/tmp/sopt/func{uuid}_opt.o')
-  os.remove(f'/tmp/sopt/func{uuid}_unopt.o')
-  os.remove(f'/tmp/sopt/func{uuid}.c')
+  try:
+    os.remove(f'/tmp/sopt/func{uuid}_opt.o')
+  except:
+    pass #???
+  try:
+    os.remove(f'/tmp/sopt/func{uuid}_unopt.o')
+  except:
+    pass #???
+  try:
+    os.remove(f'/tmp/sopt/func{uuid}.c')
+  except:
+    pass #???
   return out
 
 if __name__ == '__main__':

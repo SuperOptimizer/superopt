@@ -1,21 +1,16 @@
 import tqdm
 import torch
-import torch.optim as optim
 from x_transformers import XTransformer
 import numpy as np
-import subprocess
-import tempfile
-import generate_c
-import gzip
 import csv
 import multiprocessing
 from functools import wraps
 import time
-
+import os
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import sys
 from types import ModuleType, FunctionType
 from gc import get_referents
-
 
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn, constprop_gen, detokenize_prog
@@ -35,7 +30,9 @@ if '2060' in torch.cuda.get_device_name():
   DEC_DEPTH = 4
   DEP_HEADS = 4
   DTYPE=torch.float16
-elif '4090' in torch.cuda.get_device_name() or 'A5000' in torch.cuda.get_device_name():
+elif ('4090' in torch.cuda.get_device_name() or
+      'A5000' in torch.cuda.get_device_name() or
+      '3090' in torch.cuda.get_device_name()):
   DIM = 1024
   BATCH_SIZE = 64
   GENERATE_EVERY = 200
@@ -83,11 +80,11 @@ def optim_db_save(c_code:str, unopt:list, opt:list):
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writerow({'c':c_code,'unopt':unopt[:unopt.index(tkn('PAD'))],'opt':opt[:opt.index(tkn('PAD'))]})
 
-def func(uuid):
+def gen_training_entry(uuid):
   while True:
     prog = None
     while prog is None:
-      prog = compile(uuid)
+      prog = compile((uuid,8,30))
       #prog = constprop_gen()
     unopt_tokenized = tokenize_prog(prog['unopt'], True, ENC_SEQ_LEN)
     if unopt_tokenized is None:
@@ -114,47 +111,29 @@ def func(uuid):
 
     return unopt_tokenized,opt_tokenized,mysrc_mask
 
-
-training_data = []
-async_result = None
-pool = multiprocessing.Pool()
-
-def initiate_async_call(batchsize):
-  global async_result, pool
-  async_result = pool.map_async(func, list(range(batchsize * 64)))
-
-
-def getbatch(batchsize, uuid):
-  global training_data, async_result, pool
-  # Check if training_data is empty to decide whether to wait for the async operation
+def cycle(training_data, pool, async_result):
   if len(training_data) == 0:
     if async_result is None:
-      initiate_async_call(batchsize)
+      async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
     training_data = async_result.get()
-    initiate_async_call(batchsize)
+    async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
+  batch = training_data[:BATCH_SIZE]
+  training_data = training_data[BATCH_SIZE:]
 
-  # Retrieve the required batch from training_data
-  ret = training_data[:batchsize]
-  # Update training_data by removing the batch that was just retrieved
-  training_data = training_data[batchsize:]
-  return ret
+  mysrc = torch.tensor(list(x[0] for x in batch)).long().cuda()
+  mytgt = torch.tensor(list(x[1] for x in batch)).long().cuda()
+  mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().cuda()
+  return mysrc, mysrc_mask, mytgt, training_data, pool, async_result
 
-
-def cycle():
-  uuid = 0
-
-  while True:
-    batch = getbatch(BATCH_SIZE, uuid)
-    uuid += BATCH_SIZE
-
-    mysrc = torch.tensor(list(x[0] for x in batch)).long().cuda()
-    mytgt = torch.tensor(list(x[1] for x in batch)).long().cuda()
-    mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().cuda()
-    yield (mysrc, mysrc_mask, mytgt)
 
 @timeit
-def main():
+def train(rank, world_size):
+
   nvmlInit()
+  os.environ['MASTER_ADDR'] = 'localhost'
+  os.environ['MASTER_PORT'] = '12355'
+  torch.distributed.init_process_group(backend='nccl', rank=rank,world_size=world_size)
+  torch.cuda.set_device(rank)
 
   model = XTransformer(
     dim = DIM,
@@ -170,25 +149,26 @@ def main():
     dec_depth = ENC_DEPTH,
     dec_heads = ENC_HEADS,
     dec_max_seq_len = DEC_SEQ_LEN
-  ).cuda()
+  ).cuda(device=rank)
+
+  model = FSDP(model)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
   params = sum([np.prod(p.size()) for p in model_parameters])
   print(f"num params {params//1024//1024}M {params//1024}K ")
 
-
-  # optimizer
-
   optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
   scaler = torch.cuda.amp.GradScaler()
-  # training
+
+  training_data = []
+  pool = multiprocessing.Pool()
+  async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt = next(cycle())
-    #print(src,tgt,src_mask)
+    src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
     with torch.cuda.amp.autocast(dtype=DTYPE):
       loss = model(src, tgt, mask=src_mask)
     #loss.backward()
@@ -207,9 +187,8 @@ def main():
                   'scaler':scaler.state_dict()},
                  f'/tmp/sopt/checkpoint.pt')
       model.eval()
-      src, src_mask, tgt = next(cycle())
+      src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
       src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
-      #start_tokens = (torch.ones((1, 1)) * 1).long().cuda()
       start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
       sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
 
@@ -232,7 +211,11 @@ def main():
       print(f'free     : {info.free//1024//1024}MB')
       print(f'used     : {info.used//1024//1024}MB')
 
+  torch.distributed.destroy_process_group()
+
+def main():
+  world_size = torch.cuda.device_count()
+  torch.multiprocessing.spawn(train, args=(world_size,), nprocs=world_size,join=True)
+
 if __name__ == '__main__':
   main()
-  pool.close()
-  pool.terminate()
