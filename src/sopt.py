@@ -30,6 +30,15 @@ if '2060' in torch.cuda.get_device_name():
   DEC_DEPTH = 4
   DEP_HEADS = 4
   DTYPE=torch.float16
+elif 'V100' in torch.cuda.get_device_name():
+  DIM = 1024
+  BATCH_SIZE = 32
+  GENERATE_EVERY = 100
+  ENC_DEPTH = 8
+  ENC_HEADS = 8
+  DEC_DEPTH = 8
+  DEP_HEADS = 8
+  DTYPE=torch.float16
 elif ('4090' in torch.cuda.get_device_name() or
       'A5000' in torch.cuda.get_device_name() or
       '3090' in torch.cuda.get_device_name()):
@@ -114,9 +123,9 @@ def gen_training_entry(uuid):
 def cycle(training_data, pool, async_result):
   if len(training_data) == 0:
     if async_result is None:
-      async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
+      async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 8)))
     training_data = async_result.get()
-    async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
+    async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 8)))
   batch = training_data[:BATCH_SIZE]
   training_data = training_data[BATCH_SIZE:]
 
@@ -163,7 +172,7 @@ def train(rank, world_size):
 
   training_data = []
   pool = multiprocessing.Pool()
-  async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
+  async_result = None
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
