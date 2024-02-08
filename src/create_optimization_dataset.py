@@ -31,9 +31,14 @@ def compile(args):
     ret_unopt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_unopt.o -O0 -Wall -c'.split(), capture_output=True)
     ret_opt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_opt.o -O3 -Wall -c'.split(), capture_output=True)
     if len(ret_opt.stderr) > 0 or len(ret_unopt.stderr) > 0:
-      #print("UB in generated code")
-      #generated code had UB so nothing
-      continue
+      errors =['-Wshift-count-negative','-Woverflow','-Wdiv-by-zero']
+      unopt_stderr = ret_unopt.stderr.decode('utf-8')
+      opt_stderr = ret_opt.stderr.decode('utf-8')
+      for err in errors:
+        if err in unopt_stderr or err in opt_stderr:
+          print("UB in generated code")
+          continue
+      break
     else:
       break
 
@@ -44,8 +49,8 @@ def compile(args):
   unopt_listing = subprocess.run(f'riscv64-linux-gnu-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
   opt_listing = subprocess.run(f'riscv64-linux-gnu-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
 
-  unopt_disasm = unopt_listing.stdout.decode('ascii')
-  opt_disasm = opt_listing.stdout.decode('ascii')
+  unopt_disasm = unopt_listing.stdout.decode('utf-8')
+  opt_disasm = opt_listing.stdout.decode('utf-8')
 
   out = dict()
   out['c'] = func

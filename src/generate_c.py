@@ -1,10 +1,10 @@
 import random
 import copy
 
-arith_ops = ['+','-','*','/','%',]
+arith_ops = ['+','-','*',] #'/','%',]
 cmp_ops = ['==','!=','>','<','>=','<=']
 logical_ops = ['&&','||']
-bit_ops = ['&','|','^','>>','<<']
+bit_ops = ['&','|','^',] # '>>','<<']
 ternary_ops = ['?']
 
 MATH_BINOPS = arith_ops + bit_ops
@@ -76,11 +76,11 @@ def gen_random_stmts(num_stmts, constants, tabs, global_vars, local_vars):
 def gen_random_expr(max_tokens, vars, constants):
   assert max_tokens > 0
   if max_tokens == 1:
-    return random.choice(vars + constants)
+    return '(' + random.choice(vars + constants) + ')'
   elif max_tokens == 2:
     op = random.choice(['~','!'])
     arg = random.choice(vars + constants)
-    return '(' + op + arg + ')'
+    return '(' + op + '(' + arg + '))'
   elif max_tokens >= 10:
     cmp = random.choice(cmp_ops)
     cmp_tkns = max_tokens //3
