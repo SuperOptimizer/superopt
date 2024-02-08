@@ -3,12 +3,17 @@ import subprocess
 import tempfile
 import os
 import generate_c
+import string
 from collections import defaultdict
 
 USED_INSTRS = defaultdict(lambda: 0)
 
+def randstring(n):
+  return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(n))
+
 def compile(args):
   uuid,min_tokens,max_tokens = args
+  uuid = randstring(32)
   args = ['a','b','c','d','e','f']
   args = ['*' +a if random.randint(1,2)==1 else '' + a for a in args]
   constants = random.sample(range(-2048,2047),8)

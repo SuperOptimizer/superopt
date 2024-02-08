@@ -111,12 +111,12 @@ def gen_training_entry(uuid):
 
     return unopt_tokenized,opt_tokenized,mysrc_mask
 
-def cycle(training_data, pool, async_result, rank):
+def cycle(training_data, pool, async_result):
   if len(training_data) == 0:
     if async_result is None:
-      async_result = pool.map_async(gen_training_entry, list(range(rank,rank*BATCH_SIZE * 64)))
+      async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
     training_data = async_result.get()
-    async_result = pool.map_async(gen_training_entry, list(range(rank,rank*BATCH_SIZE * 64)))
+    async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 64)))
   batch = training_data[:BATCH_SIZE]
   training_data = training_data[BATCH_SIZE:]
 
@@ -168,7 +168,7 @@ def train(rank, world_size):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result, rank)
+    src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
     with torch.cuda.amp.autocast(dtype=DTYPE):
       loss = model(src, tgt, mask=src_mask)
     #loss.backward()
@@ -187,7 +187,7 @@ def train(rank, world_size):
                   'scaler':scaler.state_dict()},
                  f'/tmp/sopt/checkpoint.pt')
       model.eval()
-      src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result, rank)
+      src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
       src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
       start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
       sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
