@@ -17,7 +17,7 @@ from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn, constprop_gen, detokenize
 from create_optimization_dataset import compile
 
 NUM_BATCHES = int(1e5)
-LEARNING_RATE = 3e-4
+LEARNING_RATE = 1e-4
 ENC_SEQ_LEN = 256
 DEC_SEQ_LEN = 128
 
@@ -159,6 +159,7 @@ def train(rank, world_size):
 
   optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
   scaler = torch.cuda.amp.GradScaler()
+  scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
 
   training_data = []
   pool = multiprocessing.Pool()
@@ -175,6 +176,7 @@ def train(rank, world_size):
     scaler.scale(loss).backward()
     scaler.step(optim)
     scaler.update()
+    scheduler.step(i/NUM_BATCHES)
     print(f'{i}: {loss.item()}')
 
     #optim.step()
