@@ -55,6 +55,15 @@ elif ('4090' in torch.cuda.get_device_name() or
   DEC_DEPTH = 8
   DEP_HEADS = 8
   DTYPE=torch.bfloat16
+elif 'A100' in torch.cuda.get_device_name():
+  DIM = 4096
+  BATCH_SIZE = 64
+  GENERATE_EVERY = 200
+  ENC_DEPTH = 8
+  ENC_HEADS = 8
+  DEC_DEPTH = 8
+  DEP_HEADS = 8
+  DTYPE=torch.bfloat16
 else:
   assert False
 
