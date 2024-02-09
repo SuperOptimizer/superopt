@@ -208,33 +208,32 @@ def train(rank, world_size):
 
 
     if i != 0 and i % GENERATE_EVERY == 0:
-      if rank == 0:
-        with FSDP.summon_full_params(model, writeback=False, recurse=False):
-          torch.save({'epoch':i,
-                      'model_state_dict':model.state_dict(),
-                      'optimizer_state_dict':optim.state_dict(),
-                      'loss':loss.item(),
-                      'scaler':scaler.state_dict(),
-                      'scheduler':scheduler.state_dict()},
-                     f'/{ROOTDIR}/checkpoint.pt')
-          #TODO: this code isn't working on FSDP yet
-          model.eval()
-          src, src_mask, tgt, training_data, db_idx = cycle(training_data, db_idx)
-          src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
-          start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
-          sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
-          #the target output always includes the 'DECSTART' token whereas the sampled output does not
-          #so shift the output left one token to delete it
-          for x in range(DEC_SEQ_LEN-1):
-            tgt[0,x] = tgt[0,x+1]
-          incorrects = (tgt != sample).sum()
+      with FSDP.summon_full_params(model, writeback=False, recurse=False):
+        torch.save({'epoch':i,
+                    'model_state_dict':model.state_dict(),
+                    'optimizer_state_dict':optim.state_dict(),
+                    'loss':loss.item(),
+                    'scaler':scaler.state_dict(),
+                    'scheduler':scheduler.state_dict()},
+                   f'/{ROOTDIR}/checkpoint.pt')
+        #TODO: this code isn't working on FSDP yet
+        model.eval()
+        src, src_mask, tgt, training_data, db_idx = cycle(training_data, db_idx)
+        src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
+        start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
+        sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
+        #the target output always includes the 'DECSTART' token whereas the sampled output does not
+        #so shift the output left one token to delete it
+        for x in range(DEC_SEQ_LEN-1):
+          tgt[0,x] = tgt[0,x+1]
+        incorrects = (tgt != sample).sum()
 
-          print(f"input:  ", detokenize_prog(src.tolist()[0]))
-          print(f"predicted tokens:  ", sample.tolist())
-          print(f"actual tokens:     ", tgt.tolist()[0])
-          print(f"predicted asm:  ", detokenize_prog(sample.tolist()))
-          print(f"actual asm:     ", detokenize_prog(tgt.tolist()[0]))
-          print(f"incorrects: {incorrects}")
+        print(f"input:  ", detokenize_prog(src.tolist()[0]))
+        print(f"predicted tokens:  ", sample.tolist())
+        print(f"actual tokens:     ", tgt.tolist()[0])
+        print(f"predicted asm:  ", detokenize_prog(sample.tolist()))
+        print(f"actual asm:     ", detokenize_prog(tgt.tolist()[0]))
+        print(f"incorrects: {incorrects}")
 
   if world_size > 1:
     torch.distributed.destroy_process_group()
