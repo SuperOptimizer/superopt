@@ -12,6 +12,8 @@ import gzip
 from riscv_sopt import tokenize_asm, INSTRS, tokenize_prog, detokenize_prog, tkn
 
 USED_INSTRS = defaultdict(lambda: 0)
+USERDIR = os.path.expanduser('~')
+
 
 def randstring(n):
   return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(n))
@@ -156,12 +158,11 @@ def compile(args):
   return out
 
 def gen(uuid):
-
-  with gzip.open(f'/tmp/sopt/db_{uuid}.csv.gz','a+t') as f:
+  with gzip.open(f'/{USERDIR}/sopt/db_{uuid}.csv.gz','a+t') as f:
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
 
-    for x in range(1000000):
+    for x in range(10000):
       prog = compile((x,8,32))
       if x % 1000 == 0:
         print(uuid,x)
@@ -188,9 +189,9 @@ if __name__ == '__main__':
 
   with multiprocessing.Pool(16) as p:
     p.map(gen,list(range(16)))
+  #gen(0)
 
-
-  with gzip.open('/tmp/sopt/db_0.csv.gz','rt') as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-      print(row)
+  #with gzip.open('/tmp/sopt/db_0.csv.gz','rt') as f:
+  #  reader = csv.DictReader(f)
+  #  for row in reader:
+  #    print(row)

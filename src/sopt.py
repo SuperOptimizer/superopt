@@ -11,10 +11,13 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import sys
 from types import ModuleType, FunctionType
 from gc import get_referents
-
+import gzip
+import ast
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn, constprop_gen, detokenize_prog
 from create_optimization_dataset import compile
+
+USERDIR = os.path.expanduser('~')
 
 NUM_BATCHES = int(1e5)
 LEARNING_RATE = 1e-4
@@ -120,19 +123,29 @@ def gen_training_entry(uuid):
 
     return unopt_tokenized,opt_tokenized,mysrc_mask
 
-def cycle(training_data, pool, async_result):
-  if len(training_data) == 0:
-    if async_result is None:
-      async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 8)))
-    training_data = async_result.get()
-    async_result = pool.map_async(gen_training_entry, list(range(BATCH_SIZE * 8)))
+def cycle(training_data, db_idx):
+  if len(training_data) < BATCH_SIZE:
+    print("db_idx", db_idx)
+    with gzip.open(f'/{USERDIR}/sopt/db_{db_idx}.csv.gz','rt') as f:
+      reader = csv.DictReader(f)
+      for entry in reader:
+        unopt = ast.literal_eval(entry['unopt'])
+        opt = ast.literal_eval(entry['opt'])
+        mask = [True]*len(unopt)
+        mask.extend([False]*(ENC_SEQ_LEN-len(unopt)))
+        unopt.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt)))
+        opt.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt)))
+        training_data.append((unopt,opt,mask))
+      db_idx += 1
+      if not os.path.exists(f'/{USERDIR}/sopt/db_{db_idx}.csv.gz'):
+        db_idx = 0
   batch = training_data[:BATCH_SIZE]
   training_data = training_data[BATCH_SIZE:]
 
   mysrc = torch.tensor(list(x[0] for x in batch)).long().cuda()
   mytgt = torch.tensor(list(x[1] for x in batch)).long().cuda()
   mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().cuda()
-  return mysrc, mysrc_mask, mytgt, training_data, pool, async_result
+  return mysrc, mysrc_mask, mytgt, training_data, db_idx
 
 
 @timeit
@@ -172,14 +185,13 @@ def train(rank, world_size):
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
 
   training_data = []
-  pool = multiprocessing.Pool()
-  async_result = None
+  db_idx = 0
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
+    src, src_mask, tgt, training_data, db_idx = cycle(training_data, db_idx)
     with torch.cuda.amp.autocast(dtype=DTYPE):
       loss = model(src, tgt, mask=src_mask)
 
@@ -189,27 +201,26 @@ def train(rank, world_size):
     scheduler.step(i/NUM_BATCHES)
     print(f'{i}: {loss.item()}')
 
+    if i == 0:
+      h = nvmlDeviceGetHandleByIndex(0)
+      info = nvmlDeviceGetMemoryInfo(h)
+      print(f'total    : {info.total // 1024 // 1024}MB')
+      print(f'free     : {info.free // 1024 // 1024}MB')
+      print(f'used     : {info.used // 1024 // 1024}MB')
+
+
     if i != 0 and i % GENERATE_EVERY == 0:
-      if rank == 0:
-        torch.save({'epoch':i,
-                    'model_state_dict':model.state_dict(),
-                    'optimizer_state_dict':optim.state_dict(),
-                    'loss':loss.item(),
-                    'scaler':scaler.state_dict(),
-                    'scheduler':scheduler.state_dict()},
-                   f'/tmp/sopt/checkpoint0.pt')
-      elif rank == 1:
-        torch.save({'epoch': i,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optim.state_dict(),
-                    'loss': loss.item(),
-                    'scaler': scaler.state_dict(),
-                    'scheduler': scheduler.state_dict()},
-                   f'/tmp/sopt/checkpoint1.pt')
+      torch.save({'epoch':i,
+                  'model_state_dict':model.state_dict(),
+                  'optimizer_state_dict':optim.state_dict(),
+                  'loss':loss.item(),
+                  'scaler':scaler.state_dict(),
+                  'scheduler':scheduler.state_dict()},
+                 f'/{USERDIR}/sopt/checkpoint0.pt')
       if world_size == 1:
         #TODO: this code isn't working on FSDP yet
         model.eval()
-        src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
+        src, src_mask, tgt, training_data, db_idx = cycle(training_data, db_idx)
         src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
         start_tokens = torch.tensor([tkn('DECSTART')]).cuda()
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
@@ -227,13 +238,8 @@ def train(rank, world_size):
         print(f"actual asm:     ", detokenize_prog(tgt.tolist()[0]))
         print(f"incorrects: {incorrects}")
 
-      h = nvmlDeviceGetHandleByIndex(0)
-      info = nvmlDeviceGetMemoryInfo(h)
-      print(f'total    : {info.total//1024//1024}MB')
-      print(f'free     : {info.free//1024//1024}MB')
-      print(f'used     : {info.used//1024//1024}MB')
-
-  torch.distributed.destroy_process_group()
+  if world_size > 1:
+    torch.distributed.destroy_process_group()
 
 def main():
   world_size = torch.cuda.device_count()
