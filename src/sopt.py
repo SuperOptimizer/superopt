@@ -229,8 +229,8 @@ def train(rank, world_size):
         incorrects = (tgt != sample).sum()
         print_stmt = f'RANK: {rank} start\n'
         print_stmt += f"input:  \n{detokenize_prog(src.tolist()[0])} \n"
-        print_stmt += f"predicted tokens:  \n{sample.tolist()} \n"
-        print_stmt += f"actual tokens:     \n{tgt.tolist()[0]} \n"
+        #print_stmt += f"predicted tokens:  \n{sample.tolist()} \n"
+        #print_stmt += f"actual tokens:     \n{tgt.tolist()[0]} \n"
         print_stmt += f"predicted asm:  \n{detokenize_prog(sample.tolist())}\n"
         print_stmt += f"actual asm:     \n{detokenize_prog(tgt.tolist()[0])}\n"
         print_stmt += f"incorrects: {incorrects}\n"
