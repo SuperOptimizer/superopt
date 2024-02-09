@@ -346,7 +346,7 @@ def tokenize_prog(prog: str, encoder, ctxlen):
     ret.extend(tokenize_asm(line.strip()))
   #ret.append(tkn('ENCEND' if encoder else 'DECEND'))
   if ctxlen < len(ret):
-    print(f"got {len(ret)} tokens but only {ctxlen} context length")
+    #print(f"got {len(ret)} tokens but only {ctxlen} context length")
     return None
   else:
     pass
