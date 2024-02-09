@@ -227,13 +227,15 @@ def train(rank, world_size):
         for x in range(DEC_SEQ_LEN-1):
           tgt[0,x] = tgt[0,x+1]
         incorrects = (tgt != sample).sum()
-
-        print(f"input:  ", detokenize_prog(src.tolist()[0]))
-        print(f"predicted tokens:  ", sample.tolist())
-        print(f"actual tokens:     ", tgt.tolist()[0])
-        print(f"predicted asm:  ", detokenize_prog(sample.tolist()))
-        print(f"actual asm:     ", detokenize_prog(tgt.tolist()[0]))
-        print(f"incorrects: {incorrects}")
+        print_stmt = f'RANK: {rank} start\n'
+        print_stmt += f"input:  \n{detokenize_prog(src.tolist()[0])} \n"
+        print_stmt += f"predicted tokens:  \n{sample.tolist()} \n"
+        print_stmt += f"actual tokens:     \n{tgt.tolist()[0]} \n"
+        print_stmt += f"predicted asm:  \n{detokenize_prog(sample.tolist())}\n"
+        print_stmt += f"actual asm:     \n{detokenize_prog(tgt.tolist()[0])}\n"
+        print_stmt += f"incorrects: {incorrects}\n"
+        print_stmt += f'RANK: {rank} end\n'
+        print(print_stmt)
 
   if world_size > 1:
     torch.distributed.destroy_process_group()
