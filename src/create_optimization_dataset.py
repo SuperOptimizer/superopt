@@ -5,6 +5,11 @@ import os
 import generate_c
 import string
 from collections import defaultdict
+from subprocess import Popen, PIPE
+import csv
+import gzip
+
+from riscv_sopt import tokenize_asm, INSTRS, tokenize_prog, detokenize_prog, tkn
 
 USED_INSTRS = defaultdict(lambda: 0)
 
@@ -28,29 +33,45 @@ def compile(args):
 
     with open(f'/tmp/sopt/func{uuid}.c', 'w+') as f:
       f.write(func)
-    ret_unopt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_unopt.o -O0 -Wall -c'.split(), capture_output=True)
-    ret_opt = subprocess.run(f'riscv64-linux-gnu-gcc /tmp/sopt/func{uuid}.c -o /tmp/sopt/func{uuid}_opt.o -O3 -Wall -c'.split(), capture_output=True)
-    if len(ret_opt.stderr) > 0 or len(ret_unopt.stderr) > 0:
+
+    ret_unopt_process = Popen(
+      ['riscv64-linux-gnu-gcc', f'/tmp/sopt/func{uuid}.c', '-o', f'/tmp/sopt/func{uuid}_unopt.o', '-O0',
+       '-Wall', '-c'], stdout=PIPE, stderr=PIPE)
+
+    ret_opt_process = Popen(
+      ['riscv64-linux-gnu-gcc', f'/tmp/sopt/func{uuid}.c', '-o', f'/tmp/sopt/func{uuid}_opt.o', '-O3',
+       '-Wall', '-c'], stdout=PIPE, stderr=PIPE)
+
+    _, unopt_stderr = ret_unopt_process.communicate()
+    _, opt_stderr = ret_opt_process.communicate()
+
+    unopt_stderr = unopt_stderr.decode('utf-8')
+    opt_stderr = opt_stderr.decode('utf-8')
+
+    if len(opt_stderr) > 0 or len(unopt_stderr) > 0:
       errors =['-Wshift-count-negative','-Woverflow','-Wdiv-by-zero']
-      unopt_stderr = ret_unopt.stderr.decode('utf-8')
-      opt_stderr = ret_opt.stderr.decode('utf-8')
       for err in errors:
         if err in unopt_stderr or err in opt_stderr:
-          print("UB in generated code")
+          #print("UB in generated code")
           continue
       break
     else:
       break
 
-  #strip because symbols get in the way of parsing
-  stripped_unopt = subprocess.run(f'riscv64-linux-gnu-strip /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
-  stripped_opt = subprocess.run(f'riscv64-linux-gnu-strip /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
+  # Start the process to strip the unoptimized object file
+  stripped_unopt_process = subprocess.Popen(['riscv64-linux-gnu-strip', f'/tmp/sopt/func{uuid}_unopt.o'])
+  stripped_opt_process = subprocess.Popen(['riscv64-linux-gnu-strip', f'/tmp/sopt/func{uuid}_opt.o'])
+  stripped_unopt_process.wait()
+  stripped_opt_process.wait()
 
-  unopt_listing = subprocess.run(f'riscv64-linux-gnu-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_unopt.o'.split(), capture_output=True)
-  opt_listing = subprocess.run(f'riscv64-linux-gnu-objdump -M no-aliases --no-show-raw-insn -d /tmp/sopt/func{uuid}_opt.o'.split(), capture_output=True)
+  unopt_process = Popen(['riscv64-linux-gnu-objdump', '-M', 'no-aliases', '--no-show-raw-insn', '-d', f'/tmp/sopt/func{uuid}_unopt.o'],stdout=PIPE)
+  opt_process = Popen(['riscv64-linux-gnu-objdump', '-M', 'no-aliases', '--no-show-raw-insn', '-d', f'/tmp/sopt/func{uuid}_opt.o'],stdout=PIPE)
 
-  unopt_disasm = unopt_listing.stdout.decode('utf-8')
-  opt_disasm = opt_listing.stdout.decode('utf-8')
+  unopt_stdout, unopt_stderr = unopt_process.communicate()
+  unopt_disasm = unopt_stdout.decode('utf-8')
+
+  opt_stdout, opt_stderr = opt_process.communicate()
+  opt_disasm = opt_stdout.decode('utf-8')
 
   out = dict()
   out['c'] = func
@@ -75,6 +96,18 @@ def compile(args):
         if instr in ['c.ebreak','ebreak']:
           #TODO: ???
           # for now we will just not output the program
+          try:
+            os.remove(f'/tmp/sopt/func{uuid}_opt.o')
+          except:
+            pass  # ???
+          try:
+            os.remove(f'/tmp/sopt/func{uuid}_unopt.o')
+          except:
+            pass  # ???
+          try:
+            os.remove(f'/tmp/sopt/func{uuid}.c')
+          except:
+            pass  # ???
           return None
         if instr in ['lui','c.lui']:
           #convert hex imm to decimal
@@ -82,6 +115,18 @@ def compile(args):
           newimm = int(imm,16)
           if newimm > 4096:
             #lui can have values > 4096 which we don't support yet so just return None
+            try:
+              os.remove(f'/tmp/sopt/func{uuid}_opt.o')
+            except:
+              pass  # ???
+            try:
+              os.remove(f'/tmp/sopt/func{uuid}_unopt.o')
+            except:
+              pass  # ???
+            try:
+              os.remove(f'/tmp/sopt/func{uuid}.c')
+            except:
+              pass  # ???
             return None
           asm = asm.replace(imm,str(newimm))
         if instr in ['beq','bne','blt','bge','bltu','bgeu','c.beqz','c.bnez', 'c.j']:
@@ -110,22 +155,42 @@ def compile(args):
     pass #???
   return out
 
+def gen(uuid):
+
+  with gzip.open(f'/tmp/sopt/db_{uuid}.csv.gz','a+t') as f:
+    writer = csv.DictWriter(f,['c','unopt','opt'])
+    writer.writeheader()
+
+    for x in range(1000000):
+      prog = compile((x,8,32))
+      if x % 1000 == 0:
+        print(uuid,x)
+      if prog is None:
+        continue
+      unopt = tokenize_prog(prog['unopt'], True, 256)
+      opt   = tokenize_prog(prog['opt'],  False, 128)
+      if unopt is None or opt is None:
+        continue
+      try:
+        #sometimes 'PAD' doesn't show up in the input
+        #I _assume_ this is because we generated exactly 256 tokens
+        #but for now let's just skip that case
+        row = {'c': prog['c'],
+                       'unopt': unopt[:unopt.index(tkn('PAD'))],
+                       'opt': opt[:opt.index(tkn('PAD'))]}
+      except:
+        continue
+
+      writer.writerow(row)
+
 if __name__ == '__main__':
+  import multiprocessing
 
-  from riscv_sopt import tokenize_asm, INSTRS, tokenize_prog, detokenize_prog
-  INSTRS = set(INSTRS)
+  with multiprocessing.Pool(16) as p:
+    p.map(gen,list(range(16)))
 
-  for x in range(100):
-    prog = compile(x)
-    unopt = []
-    if prog is None:
-      continue
-    unopt_tokenized = tokenize_prog(prog['unopt'], True, 256)
-    opt_tokenized   = tokenize_prog(prog['opt'],  False, 256)
-    detokenized = detokenize_prog(opt_tokenized)
-    if x % 10 == 0:
-      for k,v in sorted(USED_INSTRS.items(), key= lambda x: x[1]):
-        print(k,v)
-      print("unused instrs", sorted(INSTRS - USED_INSTRS.keys()))
 
-    print(prog)
+  with gzip.open('/tmp/sopt/db_0.csv.gz','rt') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+      print(row)
