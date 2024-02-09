@@ -17,6 +17,8 @@ from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 from riscv_sopt import NUM_TOKENS, tokenize_prog, tkn, constprop_gen, detokenize_prog
 from create_optimization_dataset import compile
 
+ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..'))
+
 USERDIR = os.path.expanduser('~')
 
 NUM_BATCHES = int(1e5)
@@ -87,10 +89,6 @@ def timeit(func):
   return timeit_wrapper
 
 
-def optim_db_save(c_code:str, unopt:list, opt:list):
-  with open('/tmp/sopt/db.csv','a+') as f:
-    writer = csv.DictWriter(f,['c','unopt','opt'])
-    writer.writerow({'c':c_code,'unopt':unopt[:unopt.index(tkn('PAD'))],'opt':opt[:opt.index(tkn('PAD'))]})
 
 def gen_training_entry(uuid):
   while True:
@@ -126,7 +124,7 @@ def gen_training_entry(uuid):
 def cycle(training_data, db_idx):
   if len(training_data) < BATCH_SIZE:
     print("db_idx", db_idx)
-    with gzip.open(f'/{USERDIR}/sopt/db_{db_idx}.csv.gz','rt') as f:
+    with gzip.open(f'/{ROOTDIR}/data/db_{db_idx}.csv.gz','rt') as f:
       reader = csv.DictReader(f)
       for entry in reader:
         unopt = ast.literal_eval(entry['unopt'])
@@ -137,7 +135,7 @@ def cycle(training_data, db_idx):
         opt.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt)))
         training_data.append((unopt,opt,mask))
       db_idx += 1
-      if not os.path.exists(f'/{USERDIR}/sopt/db_{db_idx}.csv.gz'):
+      if not os.path.exists(f'/{ROOTDIR}/data/db_{db_idx}.csv.gz'):
         db_idx = 0
   batch = training_data[:BATCH_SIZE]
   training_data = training_data[BATCH_SIZE:]
