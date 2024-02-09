@@ -214,7 +214,7 @@ def train(rank, world_size):
                   'loss':loss.item(),
                   'scaler':scaler.state_dict(),
                   'scheduler':scheduler.state_dict()},
-                 f'/{USERDIR}/sopt/checkpoint0.pt')
+                 f'/{ROOTDIR}/checkpoint.pt')
       if world_size == 1:
         #TODO: this code isn't working on FSDP yet
         model.eval()
