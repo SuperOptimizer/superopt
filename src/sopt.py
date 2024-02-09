@@ -182,24 +182,32 @@ def train(rank, world_size):
     src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
     with torch.cuda.amp.autocast(dtype=DTYPE):
       loss = model(src, tgt, mask=src_mask)
-    #loss.backward()
+
     scaler.scale(loss).backward()
     scaler.step(optim)
     scaler.update()
     scheduler.step(i/NUM_BATCHES)
     print(f'{i}: {loss.item()}')
 
-    #optim.step()
-
     if i != 0 and i % GENERATE_EVERY == 0:
-      torch.save({'epoch':i,
-                  'model_state_dict':model.state_dict(),
-                  'optimizer_state_dict':optim.state_dict(),
-                  'loss':loss.item(),
-                  'scaler':scaler.state_dict(),
-                  'scheduler':scheduler.state_dict()},
-                 f'/tmp/sopt/checkpoint.pt')
+      if rank == 0:
+        torch.save({'epoch':i,
+                    'model_state_dict':model.state_dict(),
+                    'optimizer_state_dict':optim.state_dict(),
+                    'loss':loss.item(),
+                    'scaler':scaler.state_dict(),
+                    'scheduler':scheduler.state_dict()},
+                   f'/tmp/sopt/checkpoint0.pt')
+      elif rank == 1:
+        torch.save({'epoch': i,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optim.state_dict(),
+                    'loss': loss.item(),
+                    'scaler': scaler.state_dict(),
+                    'scheduler': scheduler.state_dict()},
+                   f'/tmp/sopt/checkpoint1.pt')
       if world_size == 1:
+        #TODO: this code isn't working on FSDP yet
         model.eval()
         src, src_mask, tgt, training_data, pool, async_result = cycle(training_data, pool, async_result)
         src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
