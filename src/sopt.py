@@ -28,8 +28,8 @@ DEC_SEQ_LEN = 128
 
 if '2060' in torch.cuda.get_device_name():
   DIM = 512
-  BATCH_SIZE = 8
-  GENERATE_EVERY = 10
+  BATCH_SIZE = 16
+  GENERATE_EVERY = 100
   ENC_DEPTH = 4
   ENC_HEADS = 4
   DEC_DEPTH = 4
@@ -182,6 +182,7 @@ def train(rank, world_size):
   ).cuda(device=rank)
   if world_size > 1:
     model = FSDP(model)
+  model = torch.compile(model)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
   params = sum([np.prod(p.size()) for p in model_parameters])
