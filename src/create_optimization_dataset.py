@@ -13,6 +13,8 @@ from riscv_sopt import tokenize_asm, INSTRS, tokenize_prog, detokenize_prog, tkn
 
 USED_INSTRS = defaultdict(lambda: 0)
 USERDIR = os.path.expanduser('~')
+ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..'))
+
 
 
 def randstring(n):
@@ -157,12 +159,14 @@ def compile(args):
     pass #???
   return out
 
+ALL_INPUTS = set()
+
 def gen(uuid):
-  with gzip.open(f'/{USERDIR}/sopt/db_{uuid}.csv.gz','a+t') as f:
+  with gzip.open(f'/{ROOTDIR}/data/db_{uuid}.csv.gz','w+t') as f:
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
 
-    for x in range(10000):
+    for x in range(100000):
       prog = compile((x,8,32))
       if x % 1000 == 0:
         print(uuid,x)
@@ -172,24 +176,30 @@ def gen(uuid):
       opt   = tokenize_prog(prog['opt'],  False, 128)
       if unopt is None or opt is None:
         continue
-      try:
-        #sometimes 'PAD' doesn't show up in the input
-        #I _assume_ this is because we generated exactly 256 tokens
-        #but for now let's just skip that case
-        row = {'c': prog['c'],
-                       'unopt': unopt[:unopt.index(tkn('PAD'))],
-                       'opt': opt[:opt.index(tkn('PAD'))]}
-      except:
+      #sometimes 'PAD' doesn't show up in the input
+      #I _assume_ this is because we generated exactly 256 tokens
+      #but for now let's just skip that case
+      if tkn('PAD') in unopt:
+        unopt_val = unopt[:unopt.index(tkn('PAD'))]
+      else:
+        unopt_val = unopt
+      if hash(str(unopt_val)) in ALL_INPUTS:
+        #print("collision",prog['c'])
         continue
+      else:
+        ALL_INPUTS.add(hash(str(unopt_val)))
+      row = {'c': prog['c'],
+                     'unopt': unopt_val,
+                     'opt': opt[:opt.index(tkn('PAD'))]}
 
       writer.writerow(row)
 
 if __name__ == '__main__':
   import multiprocessing
 
-  with multiprocessing.Pool(16) as p:
-    p.map(gen,list(range(16)))
-  #gen(0)
+  #with multiprocessing.Pool(16) as p:
+  #  p.map(gen,list(range(16,32)))
+  gen(0)
 
   #with gzip.open('/tmp/sopt/db_0.csv.gz','rt') as f:
   #  reader = csv.DictReader(f)
