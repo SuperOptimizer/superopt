@@ -208,7 +208,7 @@ def train(rank, world_size):
     model = model.to('cpu')
 
   if world_size > 1:
-    model = FSDP(model)
+    model = FSDP(model, use_orig_params=True)
 
   if DEVICE in ['cuda','cpu']:
     model = torch.compile(model)
@@ -223,7 +223,7 @@ def train(rank, world_size):
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
 
   training_data = []
-  db_idx = rank
+  db_idx = rank+16
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
