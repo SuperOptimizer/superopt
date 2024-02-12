@@ -177,6 +177,8 @@ def cycle(training_data, db_idx):
 @timeit
 def train(rank, world_size):
 
+  if DEVICE == 'cuda':
+    nvmlInit()
   if world_size > 1:
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
@@ -207,7 +209,9 @@ def train(rank, world_size):
 
   if world_size > 1:
     model = FSDP(model)
-  model = torch.compile(model)
+
+  if DEVICE in ['cuda','cpu']:
+    model = torch.compile(model)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
   params = sum([np.prod(p.size()) for p in model_parameters])
@@ -280,8 +284,6 @@ def train(rank, world_size):
     torch.distributed.destroy_process_group()
 
 def main():
-  if DEVICE == 'cuda':
-    nvmlInit()
   if WORLD_SIZE == 0:
     train(0,1)
   else:
