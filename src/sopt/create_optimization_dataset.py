@@ -1,0 +1,90 @@
+import random
+import subprocess
+import os
+import gen
+from subprocess import Popen, PIPE
+import csv
+import gzip
+import platform
+
+from riscv import tokenize, tkn
+from utils import randstring, ROOTDIR
+from gen import compile, yarpgen
+
+
+
+ARCH = 'riscv'
+
+if platform.system() == 'Linux':
+  if ARCH == 'riscv':
+    CC = 'riscv64-linux-gnu-gcc'
+    STRIP = 'riscv64-linux-gnu-strip'
+    OBJDUMP = 'riscv64-linux-gnu-objdump'
+  elif ARCH == 'x86':
+    CC = 'gcc'
+    STRIP = 'strip'
+    OBJDUMP = 'objdump'
+
+
+
+ALL_INPUTS = set()
+NUM_PROGS = 0
+def gen(uuid):
+  global NUM_PROGS
+  with gzip.open(f'/{ROOTDIR}/data/db_{uuid}.csv.gz','w+t') as f:
+    writer = csv.DictWriter(f,['c','unopt','opt'])
+    writer.writeheader()
+
+    for x in range(100000):
+      prog = yarpgen(uuid)
+      compiled = compile(prog, CC, STRIP, OBJDUMP)
+      if x % 1000 == 0:
+        print(uuid,x)
+      if compiled is None:
+        continue
+      unopt = tokenize(compiled['unopt'], True, 256)
+      if unopt is None:
+        continue
+      opt   = tokenize(compiled['opt'],  False, 128)
+      if opt is None:
+        continue
+      NUM_PROGS +=1
+      print(NUM_PROGS)
+      #sometimes 'PAD' doesn't show up in the input
+      #I _assume_ this is because we generated exactly 256 tokens
+      if tkn('PAD') in unopt:
+        unopt_val = unopt[:unopt.index(tkn('PAD'))]
+      else:
+        unopt_val = unopt
+      if hash(str(unopt_val)) in ALL_INPUTS:
+        print("already in db")
+        #this won't eliminate duplicates across processes but will in theory cap the number of duplicates
+        #of any given program to num processes
+        continue
+      else:
+        ALL_INPUTS.add(hash(str(unopt_val)))
+      row = {'c': compiled['c'],
+                     'unopt': unopt_val,
+                     'opt': opt[:opt.index(tkn('PAD'))]}
+
+      writer.writerow(row)
+
+if __name__ == '__main__':
+
+  #with multiprocessing.Pool(16) as p:
+  #  p.map(gen,list(range(16,32)))
+  gen(0)
+  ALL_INPUTS = set()
+  for i,gz in enumerate(os.listdir(f'/{ROOTDIR}/data/')):
+    with gzip.open(f'/{ROOTDIR}/data/{gz}','rt') as inf, gzip.open(f'/{ROOTDIR}/data/processed_{i}.csv.gz', 'w+t') as outf:
+      reader = csv.DictReader(inf)
+      writer = csv.DictWriter(outf,fieldnames=reader.fieldnames)
+      writer.writeheader()
+      for row in reader:
+        h = hash(row['unopt'])
+        if h in ALL_INPUTS:
+          continue
+        else:
+          ALL_INPUTS.add(h)
+          writer.writerow(row)
+

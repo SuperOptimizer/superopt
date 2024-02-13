@@ -1,3 +1,5 @@
+#no checkpoint files
+*.pt
 # Prerequisites
 *.d
 
