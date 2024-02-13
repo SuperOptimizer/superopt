@@ -178,13 +178,13 @@ def gen(uuid):
         continue
       #sometimes 'PAD' doesn't show up in the input
       #I _assume_ this is because we generated exactly 256 tokens
-      #but for now let's just skip that case
       if tkn('PAD') in unopt:
         unopt_val = unopt[:unopt.index(tkn('PAD'))]
       else:
         unopt_val = unopt
       if hash(str(unopt_val)) in ALL_INPUTS:
-        #print("collision",prog['c'])
+        #this won't eliminate duplicates across processes but will in theory cap the number of duplicates
+        #of any given program to num processes
         continue
       else:
         ALL_INPUTS.add(hash(str(unopt_val)))
@@ -197,11 +197,20 @@ def gen(uuid):
 if __name__ == '__main__':
   import multiprocessing
 
-  #with multiprocessing.Pool(16) as p:
-  #  p.map(gen,list(range(16,32)))
-  gen(0)
+  with multiprocessing.Pool(16) as p:
+    p.map(gen,list(range(16,32)))
+  #gen(0)
+  ALL_INPUTS = set()
+  for i,gz in enumerate(os.listdir(f'/{ROOTDIR}/data/')):
+    with gzip.open(f'/{ROOTDIR}/data/{gz}','rt') as inf, gzip.open(f'/{ROOTDIR}/data/processed_{i}.csv.gz', 'w+t') as outf:
+      reader = csv.DictReader(inf)
+      writer = csv.DictWriter(outf,fieldnames=reader.fieldnames)
+      writer.writeheader()
+      for row in reader:
+        h = hash(row['unopt'])
+        if h in ALL_INPUTS:
+          continue
+        else:
+          ALL_INPUTS.add(h)
+          writer.writerow(row)
 
-  #with gzip.open('/tmp/sopt/db_0.csv.gz','rt') as f:
-  #  reader = csv.DictReader(f)
-  #  for row in reader:
-  #    print(row)
