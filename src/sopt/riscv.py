@@ -350,7 +350,7 @@ def tokenize(prog: str, encoder, ctxlen):
   for line in prog.split('\n'):
     ret.extend(tokenize_line(line.strip()))
   if ctxlen < len(ret):
-    print(f"got {len(ret)} tokens but only {ctxlen} context length")
+    print(f"{'encoder' if encoder else 'decoder'} got {len(ret)} tokens but only {ctxlen} context length")
     return None
   else:
     pass

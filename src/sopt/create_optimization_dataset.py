@@ -1,14 +1,10 @@
-import random
-import subprocess
 import os
-import gen
-from subprocess import Popen, PIPE
 import csv
 import gzip
 import platform
 
 from riscv import tokenize, tkn
-from utils import randstring, ROOTDIR
+from utils import  ROOTDIR, TMP
 from gen import compile, yarpgen
 
 
@@ -35,7 +31,7 @@ def gen(uuid):
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
 
-    for x in range(100000):
+    for x in range(100):
       prog = yarpgen(uuid)
       compiled = compile(prog, CC, STRIP, OBJDUMP)
       if x % 1000 == 0:
@@ -56,6 +52,10 @@ def gen(uuid):
         unopt_val = unopt[:unopt.index(tkn('PAD'))]
       else:
         unopt_val = unopt
+      if tkn('PAD') in opt:
+        opt_val = opt[:opt.index(tkn('PAD'))]
+      else:
+        opt_val = opt
       if hash(str(unopt_val)) in ALL_INPUTS:
         print("already in db")
         #this won't eliminate duplicates across processes but will in theory cap the number of duplicates
@@ -65,12 +65,13 @@ def gen(uuid):
         ALL_INPUTS.add(hash(str(unopt_val)))
       row = {'c': compiled['c'],
                      'unopt': unopt_val,
-                     'opt': opt[:opt.index(tkn('PAD'))]}
+                     'opt': opt_val}
 
       writer.writerow(row)
 
 if __name__ == '__main__':
-
+  for uuid in range(16):
+    os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
   #with multiprocessing.Pool(16) as p:
   #  p.map(gen,list(range(16,32)))
   gen(0)
@@ -78,7 +79,7 @@ if __name__ == '__main__':
   for i,gz in enumerate(os.listdir(f'/{ROOTDIR}/data/')):
     with gzip.open(f'/{ROOTDIR}/data/{gz}','rt') as inf, gzip.open(f'/{ROOTDIR}/data/processed_{i}.csv.gz', 'w+t') as outf:
       reader = csv.DictReader(inf)
-      writer = csv.DictWriter(outf,fieldnames=reader.fieldnames)
+      writer = csv.DictWriter(outf,['c','unopt','opt'])
       writer.writeheader()
       for row in reader:
         h = hash(row['unopt'])

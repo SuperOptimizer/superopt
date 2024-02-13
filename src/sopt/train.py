@@ -187,7 +187,7 @@ def train(rank, world_size):
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
 
   training_data = []
-  db_idx = rank+16
+  db_idx = rank
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
