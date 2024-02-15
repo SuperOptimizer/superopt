@@ -116,7 +116,7 @@ def gen_training_entry(uuid):
 def cycle(training_data, db_idx):
   if len(training_data) < BATCH_SIZE:
     print("db_idx", db_idx)
-    with gzip.open(f'/{ROOTDIR}/data/db_{db_idx}.csv.gz','rt') as f:
+    with gzip.open(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz','rt') as f:
       reader = csv.DictReader(f)
       for entry in reader:
         unopt = ast.literal_eval(entry['unopt'])
@@ -125,13 +125,12 @@ def cycle(training_data, db_idx):
         mask.extend([False]*(ENC_SEQ_LEN-len(unopt)))
         unopt.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt)))
         opt.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt)))
-        training_data.append((unopt,opt,mask))
+        training_data.append([unopt, opt, mask])
       db_idx += 1
-      if not os.path.exists(f'/{ROOTDIR}/data/db_{db_idx}.csv.gz'):
+      if not os.path.exists(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz'):
         db_idx = 0
   batch = training_data[:BATCH_SIZE]
   training_data = training_data[BATCH_SIZE:]
-
   mysrc = torch.tensor(list(x[0] for x in batch)).long().to(DEVICE)
   mytgt = torch.tensor(list(x[1] for x in batch)).long().to(DEVICE)
   mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
@@ -174,8 +173,8 @@ def train(rank, world_size):
   if world_size > 1:
     model = FSDP(model, use_orig_params=True)
 
-  if DEVICE in ['cuda','cpu']:
-    model = torch.compile(model)
+  #if DEVICE in ['cuda','cpu']:
+  #  model = torch.compile(model)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
   params = sum([np.prod(p.size()) for p in model_parameters])
@@ -248,7 +247,7 @@ def train(rank, world_size):
     torch.distributed.destroy_process_group()
 
 def main():
-  if WORLD_SIZE == 0:
+  if WORLD_SIZE <= 1:
     train(0,1)
   else:
     torch.multiprocessing.spawn(train, args=(WORLD_SIZE,), nprocs=WORLD_SIZE,join=True)

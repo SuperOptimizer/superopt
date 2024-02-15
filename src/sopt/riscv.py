@@ -267,7 +267,7 @@ formats = {
   "sh": "rs2,offset(rs1)",
   "sw": "rs2,offset(rs1)",
   "jal": "rd,offset",
-  "jalr": "rd,rs1,offset",
+  "jalr": "rd,offset(rs1)",
   "beq": "rs1,rs2,offset",
   "bne": "rs1,rs2,offset",
   "blt": "rs1,rs2,offset",
@@ -509,6 +509,10 @@ def tokenize_line(asm: str):
   instr,args = asm.split()
   args_fmt = get_fmt_str(instr)
   parsed = parse.parse(args_fmt, args)
+
+  if parsed is None:
+    print()
+
   ret = [INSTR_TKN_OFF + INSTRS.index(instr)]
   for k, v in parsed.named.items():
     if k == 'rd':
@@ -519,7 +523,7 @@ def tokenize_line(asm: str):
       ret.append(t)
     elif k in ['imm', 'uimm', 'offset', 'shamt']:
       t =tkn(v)
-      if isinstance(t,list): #immediates are sometimes 2 tokens
+      if isinstance(t,(list,tuple)): #immediates are sometimes 2 tokens
         ret.extend(t)
       else:
         ret.append(t)

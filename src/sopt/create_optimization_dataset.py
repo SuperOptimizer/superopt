@@ -2,6 +2,7 @@ import os
 import csv
 import gzip
 import platform
+import multiprocessing
 
 from riscv import tokenize, tkn
 from utils import  ROOTDIR, TMP
@@ -31,7 +32,7 @@ def gen(uuid):
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
 
-    for x in range(100):
+    for x in range(10000):
       prog = yarpgen(uuid)
       compiled = compile(prog, CC, STRIP, OBJDUMP)
       if x % 1000 == 0:
@@ -73,19 +74,24 @@ if __name__ == '__main__':
   for uuid in range(16):
     os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
   #with multiprocessing.Pool(16) as p:
-  #  p.map(gen,list(range(16,32)))
-  gen(0)
+  #  p.map(gen,list(range(16)))
+  #gen(0)
   ALL_INPUTS = set()
+  OUT = list()
   for i,gz in enumerate(os.listdir(f'/{ROOTDIR}/data/')):
-    with gzip.open(f'/{ROOTDIR}/data/{gz}','rt') as inf, gzip.open(f'/{ROOTDIR}/data/processed_{i}.csv.gz', 'w+t') as outf:
+    with gzip.open(f'/{ROOTDIR}/data/{gz}','rt') as inf:
+      if i == 4:
+        print()
       reader = csv.DictReader(inf)
-      writer = csv.DictWriter(outf,['c','unopt','opt'])
-      writer.writeheader()
       for row in reader:
         h = hash(row['unopt'])
         if h in ALL_INPUTS:
           continue
         else:
           ALL_INPUTS.add(h)
-          writer.writerow(row)
+          OUT.append(row)
+  with gzip.open(f'/{ROOTDIR}/data/processed.csv.gz', 'w+t') as outf:
+    writer = csv.DictWriter(outf,['c','unopt','opt'])
+    writer.writeheader()
+    writer.writerows(OUT)
 
