@@ -173,8 +173,8 @@ def train(rank, world_size):
   if world_size > 1:
     model = FSDP(model, use_orig_params=True)
 
-  #if DEVICE in ['cuda','cpu']:
-  #  model = torch.compile(model)
+  if DEVICE in ['cuda','cpu']:
+    model = torch.compile(model)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
   params = sum([np.prod(p.size()) for p in model_parameters])
@@ -233,14 +233,14 @@ def train(rank, world_size):
         for x in range(DEC_SEQ_LEN-1):
           tgt[0,x] = tgt[0,x+1]
         incorrects = (tgt != sample).sum()
-        print_stmt = f'RANK: {rank} start\n'
-        print_stmt += f"input:  \n{detokenize(src.tolist()[0])} \n"
+        print_stmt = f'\nRANK: {rank} start\n'
+        print_stmt += f"\ninput:  \n{detokenize(src.tolist()[0])} \n"
         #print_stmt += f"predicted tokens:  \n{sample.tolist()} \n"
         #print_stmt += f"actual tokens:     \n{tgt.tolist()[0]} \n"
-        print_stmt += f"predicted asm:  \n{detokenize(sample.tolist())}\n"
-        print_stmt += f"actual asm:     \n{detokenize(tgt.tolist()[0])}\n"
-        print_stmt += f"incorrects: {incorrects}\n"
-        print_stmt += f'RANK: {rank} end\n'
+        print_stmt += f"\npredicted asm:  \n{detokenize(sample.tolist())}\n"
+        print_stmt += f"\nactual asm:     \n{detokenize(tgt.tolist()[0])}\n"
+        print_stmt += f"\nincorrects: {incorrects}\n"
+        print_stmt += f'\nRANK: {rank} end\n'
         print(print_stmt)
 
   if world_size > 1:
