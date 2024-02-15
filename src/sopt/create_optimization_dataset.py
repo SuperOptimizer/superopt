@@ -71,6 +71,7 @@ def gen(uuid):
 
 if __name__ == '__main__':
   ncpu = multiprocessing.cpu_count()
+  print(f"spawning {ncpu} threads")
   ALL_INPUTS = set()
   for x in range(100):
     print('processed',x)
