@@ -31,13 +31,10 @@ def gen(uuid):
     writer.writeheader()
 
     for x in range(200):
-      if uuid == 0:
-        if x % 100 == 0:
+      if uuid == 0 and x % 10 == 0:
           print(x)
       prog = yarpgen(uuid)
       compiled = compile(prog, CC, STRIP, OBJDUMP)
-      #if x % 1000 == 0:
-      #  print(uuid,x)
       if compiled is None:
         continue
       unopt = tokenize(compiled['unopt'], True, 768)
