@@ -30,7 +30,7 @@ def gen(uuid):
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
 
-    for x in range(200):
+    for x in range(1000):
       if uuid == 0 and x % 10 == 0:
           print(x)
       prog = yarpgen(uuid)
