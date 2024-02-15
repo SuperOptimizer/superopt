@@ -73,12 +73,9 @@ FPRSRC_TKN_OFF  = GPRSRC_TKN_OFF + 32
 VPRSRC_TKN_OFF  = FPRSRC_TKN_OFF + 32
 INSTR_TKN_OFF   = VPRSRC_TKN_OFF + 32
 META_TKN_OFF    = INSTR_TKN_OFF + 1024
-ENCODER_ABBREVIATION_TKN_OFF = META_TKN_OFF + 128
-DECODER_ABBREVIATION_TKN_OFF = ENCODER_ABBREVIATION_TKN_OFF + 1024
 
 
-NUM_TOKENS = DECODER_ABBREVIATION_TKN_OFF + 1024
-assert NUM_TOKENS == 4096+32+32+32+32+32+32+1024+128+1024+1024
+NUM_TOKENS = META_TKN_OFF + len(METAS)
 
 formats = {
   "lr.d": "rd,rs1",
@@ -308,7 +305,7 @@ def detkn(t: int):
     except:
       return f"invalid_instr{t}"
   else:
-    return METAS[t - META_TKN_OFF]
+    return METAS[t - INSTR_TKN_OFF]
 
 def tkn(t: str, dest=None):
   try:
