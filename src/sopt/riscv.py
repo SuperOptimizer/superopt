@@ -73,9 +73,12 @@ FPRSRC_TKN_OFF  = GPRSRC_TKN_OFF + 32
 VPRSRC_TKN_OFF  = FPRSRC_TKN_OFF + 32
 INSTR_TKN_OFF   = VPRSRC_TKN_OFF + 32
 META_TKN_OFF    = INSTR_TKN_OFF + 1024
+ENCODER_ABBREVIATION_TKN_OFF = META_TKN_OFF + 128
+DECODER_ABBREVIATION_TKN_OFF = ENCODER_ABBREVIATION_TKN_OFF + 1024
 
 
-NUM_TOKENS = META_TKN_OFF + len(METAS)
+NUM_TOKENS = DECODER_ABBREVIATION_TKN_OFF + 1024
+assert NUM_TOKENS == 4096+32+32+32+32+32+32+1024+128+1024+1024
 
 formats = {
   "lr.d": "rd,rs1",
@@ -350,7 +353,7 @@ def tokenize(prog: str, encoder, ctxlen):
   for line in prog.split('\n'):
     ret.extend(tokenize_line(line.strip()))
   if ctxlen < len(ret):
-    print(f"{'encoder' if encoder else 'decoder'} got {len(ret)} tokens but only {ctxlen} context length")
+    #print(f"{'encoder' if encoder else 'decoder'} got {len(ret)} tokens but only {ctxlen} context length")
     return None
   else:
     pass
@@ -509,9 +512,6 @@ def tokenize_line(asm: str):
   instr,args = asm.split()
   args_fmt = get_fmt_str(instr)
   parsed = parse.parse(args_fmt, args)
-
-  if parsed is None:
-    print()
 
   ret = [INSTR_TKN_OFF + INSTRS.index(instr)]
   for k, v in parsed.named.items():

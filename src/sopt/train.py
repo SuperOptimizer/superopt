@@ -25,8 +25,8 @@ else:
 
 NUM_BATCHES = int(1e5)
 LEARNING_RATE = 1e-4
-ENC_SEQ_LEN = 256
-DEC_SEQ_LEN = 128
+ENC_SEQ_LEN = 768
+DEC_SEQ_LEN = 256
 
 if DEVICE == 'cuda':
   if '2060' in torch.cuda.get_device_name():

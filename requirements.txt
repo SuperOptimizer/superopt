@@ -2,3 +2,4 @@ parse
 x-transformers
 tqdm
 pynvml
+numpy
