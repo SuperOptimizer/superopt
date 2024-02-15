@@ -51,12 +51,12 @@ if DEVICE == 'cuda':
         'A5000' in torch.cuda.get_device_name() or
         '3090' in torch.cuda.get_device_name()):
     DIM = 1024
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
     GENERATE_EVERY = 200
-    ENC_DEPTH = 8
-    ENC_HEADS = 8
-    DEC_DEPTH = 8
-    DEP_HEADS = 8
+    ENC_DEPTH = 10
+    ENC_HEADS = 10
+    DEC_DEPTH = 10
+    DEP_HEADS = 10
     DTYPE=torch.bfloat16
   elif 'A100' in torch.cuda.get_device_name():
     DIM = 2048
