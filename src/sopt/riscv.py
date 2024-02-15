@@ -305,7 +305,7 @@ def detkn(t: int):
     except:
       return f"invalid_instr{t}"
   else:
-    return METAS[t - INSTR_TKN_OFF]
+    return METAS[t - META_TKN_OFF]
 
 def tkn(t: str, dest=None):
   try:
