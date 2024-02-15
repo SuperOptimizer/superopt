@@ -2,7 +2,7 @@ import random
 import copy
 from subprocess import Popen, PIPE
 
-from utils import randstring, TMP
+from utils import randstring, TMP, ROOTDIR
 
 
 arith_ops = ['+','-','*','/','%',]
@@ -173,7 +173,7 @@ def randgen(uuid, min_tokens, max_tokens, cc):
 
 
 def yarpgen(uuid):
-  yarp = Popen(f'/tmp/sopt/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split(), stdout=PIPE, stderr=PIPE)
+  yarp = Popen(f'/{ROOTDIR}/bin/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split(), stdout=PIPE, stderr=PIPE)
   yarpout, yarperr = yarp.communicate()
 
   return f'{TMP}/yarpgen_{uuid}/func.c'
