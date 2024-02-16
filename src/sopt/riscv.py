@@ -19,6 +19,8 @@ import random
 # + 32   = FPR source
 # + 32   = VPR source
 # + 1024 = instructions
+# + 1024 = encoder shorthand
+# + 1024 = decoder shorthand
 # + *    = meta tokens
 #
 #  riscv instructions are translated into a sequence of 1 - 5 tokens
@@ -61,6 +63,9 @@ INSTRS = ['lui', 'auipc', 'addi', 'slti', 'sltiu', 'xori', 'ori', 'andi', 'slli'
           'c.bnez', 'c.slli', 'c.fldsp', 'c.lwsp', 'c.flwsp', 'c.ldsp', 'c.jr', 'c.mv', 'c.ebreak', 'c.jalr', 'c.add',
           'c.fsdsp', 'c.swsp', 'c.fswsp', 'c.sdsp'
           ]
+ENCODER_SHORTHAND = []
+DECODER_SHORTHAND = []
+
 METAS = ['PAD', 'ENCSTART', 'ENCEND', 'DECSTART', 'DECEND']
 
 
@@ -72,7 +77,9 @@ GPRSRC_TKN_OFF  = VPRDEST_TKN_OFF + 32
 FPRSRC_TKN_OFF  = GPRSRC_TKN_OFF + 32
 VPRSRC_TKN_OFF  = FPRSRC_TKN_OFF + 32
 INSTR_TKN_OFF   = VPRSRC_TKN_OFF + 32
-META_TKN_OFF    = INSTR_TKN_OFF + 1024
+ENCODER_SHORTHAND_OFF   = VPRSRC_TKN_OFF + 32
+DECODER_SHORTHAND_OFF   = ENCODER_SHORTHAND_OFF + 1024
+META_TKN_OFF    = DECODER_SHORTHAND_OFF + 1024
 
 
 NUM_TOKENS = META_TKN_OFF + len(METAS)
@@ -307,6 +314,10 @@ def detkn(t: int):
       return INSTRS[t - INSTR_TKN_OFF]
     except:
       return f"invalid_instr{t}"
+  elif t < ENCODER_SHORTHAND_OFF:
+    return ENCODER_SHORTHAND[t - ENCODER_SHORTHAND_OFF]
+  elif t < DECODER_SHORTHAND_OFF:
+    return DECODER_SHORTHAND[t - DECODER_SHORTHAND_OFF]
   else:
     return METAS[t - META_TKN_OFF]
 
