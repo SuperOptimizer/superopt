@@ -286,7 +286,10 @@ formats = {
 
 def detkn(t: int):
   if IMM_TKN_OFF <= t < GPRDEST_TKN_OFF:
-    return str(t)
+    if t < 2048:
+      return str(t)
+    else:
+      return str((4096 - t) *-1)
   elif t < FPRDEST_TKN_OFF:
     return GPRS[t - GPRDEST_TKN_OFF]
   elif t < VPRDEST_TKN_OFF:
@@ -412,7 +415,25 @@ def detokenize(prog: [int]):
     ret.append(fmt_str.format(*cur))
   except:
     ret.append(f"invalid {cur}")
-  return '\n'.join(ret)
+  PC = 0
+
+  newret = []
+  for line in ret:
+    if 'illegal' in line:
+      PC = None
+    if PC is None:
+      newret.append(line)
+    else:
+      newret.append(f"{hex(PC).replace('0x','')}\t{line}")
+      #if line.split('\t')[0] in ['bge']:
+
+      if line.startswith('c.'):
+        PC+=2
+      else:
+        PC+=4
+
+
+  return '\n'.join(newret)
 
 def get_fmt_str(instr):
   try:
