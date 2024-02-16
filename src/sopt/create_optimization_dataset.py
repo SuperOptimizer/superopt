@@ -26,6 +26,19 @@ elif platform.system() == 'Darwin':
   STRIP = 'riscv64-elf-strip'
   OBJDUMP = 'riscv64-elf-objdump'
 
+def sanity_test():
+  ALL_UNOPT = set()
+  for x in range(100):
+    with gzip.open(f'/{ROOTDIR}/data/processed_{x}.csv.gz', 'r+t') as f:
+      reader = csv.DictReader(f)
+      for line in reader:
+        if line['unopt'] not in ALL_UNOPT:
+          ALL_UNOPT.add(line['unopt'])
+          continue
+
+        if line['unopt'] in ALL_UNOPT:
+          print("duplicaate!")
+
 
 
 ALL_INPUTS = set()
@@ -75,21 +88,21 @@ def gen(uuid):
         print()
       writer.writerow(row)
 
-if __name__ == '__main__':
+def main():
   ncpu = multiprocessing.cpu_count()
   print(f"spawning {ncpu} threads")
   ALL_INPUTS = set()
   for x in range(1000):
-    print('processed',x)
+    print('processed', x)
     for uuid in range(ncpu):
       os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
       os.makedirs(f'{TMP}/data', exist_ok=True)
-    with multiprocessing.Pool(ncpu) as p:
-      p.map(gen,list(range(ncpu)))
-    #gen(0)
+    #with multiprocessing.Pool(ncpu) as p:
+    #  p.map(gen, list(range(ncpu)))
+    gen(0)
     OUT = list()
-    for i,gz in enumerate(os.listdir(f'/{TMP}/data/')):
-      with open(f'/{TMP}/data/{gz}','rt') as inf:
+    for i, gz in enumerate(os.listdir(f'/{TMP}/data/')):
+      with open(f'/{TMP}/data/{gz}', 'rt') as inf:
         reader = csv.DictReader(inf)
         for row in reader:
           h = hash(row['unopt'])
@@ -99,10 +112,14 @@ if __name__ == '__main__':
             ALL_INPUTS.add(h)
             OUT.append(row)
     with gzip.open(f'/{ROOTDIR}/data/processed_{x}.csv.gz', 'w+t') as outf:
-      writer = csv.DictWriter(outf,['c','unopt','opt','unopt_asm','opt_asm'])
+      writer = csv.DictWriter(outf, ['c', 'unopt', 'opt', 'unopt_asm', 'opt_asm'])
       writer.writeheader()
       for row in OUT:
         if 'opt' not in row:
           print()
       writer.writerows(OUT)
 
+
+if __name__ == '__main__':
+  #sanity_test()
+  main()
