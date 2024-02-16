@@ -14,6 +14,7 @@ from utils import ROOTDIR, timeit
 
 if torch.backends.mps.is_available() and torch.backends.mps.is_built():
   DEVICE = 'mps'
+  #DEVICE='cpu'
   WORLD_SIZE = 1
 elif torch.cuda.is_available():
   from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
@@ -70,8 +71,8 @@ if DEVICE == 'cuda':
   else:
     assert False
 else:
-  DIM = 512
-  BATCH_SIZE = 16
+  DIM = 256
+  BATCH_SIZE = 2
   GENERATE_EVERY = 100
   ENC_DEPTH = 4
   ENC_HEADS = 4
@@ -79,39 +80,6 @@ else:
   DEP_HEADS = 4
   DTYPE = torch.float16
 
-
-
-
-def gen_training_entry(uuid):
-  while True:
-    prog = None
-    while prog is None:
-      prog = compile((uuid,8,30))
-      #prog = constprop_gen()
-    unopt_tokenized = tokenize(prog['unopt'], True, ENC_SEQ_LEN)
-    if unopt_tokenized is None:
-      prog = None
-      continue
-    opt_tokenized   = tokenize(prog['opt'],  False, DEC_SEQ_LEN)
-    if opt_tokenized is None:
-      prog = None
-      continue
-
-    mysrc_mask = []
-    for x in unopt_tokenized:
-      if x != tkn('PAD'):
-        mysrc_mask.append(True)
-      else:
-        mysrc_mask.append(False)
-
-    mytgt_mask = []
-    for x in opt_tokenized:
-      if x != tkn('PAD'):
-        mytgt_mask.append(True)
-      else:
-        mytgt_mask.append(False)
-
-    return unopt_tokenized,opt_tokenized,mysrc_mask
 
 def cycle(training_data, db_idx):
   if len(training_data) < BATCH_SIZE:
@@ -121,11 +89,13 @@ def cycle(training_data, db_idx):
       for entry in reader:
         unopt = ast.literal_eval(entry['unopt'])
         opt = ast.literal_eval(entry['opt'])
+        unopt_asm = entry['unopt_asm']
+        opt_asm = entry['opt_asm']
         mask = [True]*len(unopt)
         mask.extend([False]*(ENC_SEQ_LEN-len(unopt)))
         unopt.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt)))
         opt.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt)))
-        training_data.append([unopt, opt, mask])
+        training_data.append([unopt, opt, mask,unopt_asm,opt_asm])
       db_idx += 1
       if not os.path.exists(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz'):
         db_idx = 0
@@ -134,7 +104,9 @@ def cycle(training_data, db_idx):
   mysrc = torch.tensor(list(x[0] for x in batch)).long().to(DEVICE)
   mytgt = torch.tensor(list(x[1] for x in batch)).long().to(DEVICE)
   mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
-  return mysrc, mysrc_mask, mytgt, training_data, db_idx
+  unopt_asm = list(x[3] for x in batch)
+  opt_asm = list(x[4] for x in batch)
+  return mysrc, mysrc_mask, mytgt, unopt_asm, opt_asm, training_data, db_idx
 
 
 @timeit
@@ -173,7 +145,7 @@ def train(rank, world_size):
   if world_size > 1:
     model = FSDP(model, use_orig_params=True)
 
-  if DEVICE in ['cuda','cpu']:
+  if DEVICE in ['cuda']:
     model = torch.compile(model)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
@@ -192,7 +164,7 @@ def train(rank, world_size):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt, training_data, db_idx = cycle(training_data, db_idx)
+    src, src_mask, tgt, unopt_asm, opt_asm, training_data, db_idx = cycle(training_data, db_idx)
     if DEVICE == 'cuda':
       with torch.cuda.amp.autocast(dtype=DTYPE):
         loss = model(src, tgt, mask=src_mask)
@@ -224,8 +196,8 @@ def train(rank, world_size):
                      f'/{ROOTDIR}/checkpoint.pt')
 
         model.eval()
-        src, src_mask, tgt, training_data, db_idx = cycle(training_data, db_idx)
-        src, src_mask, tgt = src[:1], src_mask[:1], tgt[:1]
+        src, src_mask, tgt, unopt_asm, opt_asm, training_data, db_idx = cycle(training_data, db_idx)
+        src, src_mask, tgt, unopt_asm, opt_asm = src[:1], src_mask[:1], tgt[:1], unopt_asm[:1][0] ,opt_asm[:1][0]
         start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
         #the target output always includes the 'DECSTART' token whereas the sampled output does not
@@ -234,11 +206,13 @@ def train(rank, world_size):
           tgt[0,x] = tgt[0,x+1]
         incorrects = (tgt != sample).sum()
         print_stmt = f'\nRANK: {rank} start\n'
-        print_stmt += f"\ninput:  \n{detokenize(src.tolist()[0])} \n"
+        print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0])} \n"
+        print_stmt += f"\ninput asm:  \n{unopt_asm} \n"
         #print_stmt += f"predicted tokens:  \n{sample.tolist()} \n"
         #print_stmt += f"actual tokens:     \n{tgt.tolist()[0]} \n"
-        print_stmt += f"\npredicted asm:  \n{detokenize(sample.tolist())}\n"
-        print_stmt += f"\nactual asm:     \n{detokenize(tgt.tolist()[0])}\n"
+        print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist())}\n"
+        print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0])}\n"
+        print_stmt += f"\nactual asm:     \n{opt_asm}\n"
         print_stmt += f"\nincorrects: {incorrects}\n"
         print_stmt += f'\nRANK: {rank} end\n'
         print(print_stmt)

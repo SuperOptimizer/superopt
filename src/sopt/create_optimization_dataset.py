@@ -21,16 +21,20 @@ if platform.system() == 'Linux':
     CC = 'gcc'
     STRIP = 'strip'
     OBJDUMP = 'objdump'
+elif platform.system() == 'Darwin':
+  CC = 'riscv64-elf-gcc'
+  STRIP = 'riscv64-elf-strip'
+  OBJDUMP = 'riscv64-elf-objdump'
 
 
 
 ALL_INPUTS = set()
 def gen(uuid):
   with open(f'/{TMP}/data/db_{uuid}.csv.gz','w+t') as f:
-    writer = csv.DictWriter(f,['c','unopt','opt'])
+    writer = csv.DictWriter(f,['c','unopt','opt','unopt_asm','opt_asm'])
     writer.writeheader()
 
-    for x in range(1000):
+    for x in range(100):
       if uuid == 0 and x % 10 == 0:
           print(x)
       prog = yarpgen(uuid)
@@ -60,17 +64,22 @@ def gen(uuid):
         continue
       else:
         ALL_INPUTS.add(hash(str(unopt_val)))
-      row = {'c': compiled['c'],
-                     'unopt': unopt_val,
-                     'opt': opt_val}
-
+      row = {
+        'c': compiled['c'],
+        'unopt': unopt_val,
+        'opt': opt_val,
+        'unopt_asm': compiled['unopt'],
+        'opt_asm': compiled['opt']
+      }
+      if len(row) < 5:
+        print()
       writer.writerow(row)
 
 if __name__ == '__main__':
   ncpu = multiprocessing.cpu_count()
   print(f"spawning {ncpu} threads")
   ALL_INPUTS = set()
-  for x in range(100):
+  for x in range(1):
     print('processed',x)
     for uuid in range(ncpu):
       os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
@@ -90,7 +99,10 @@ if __name__ == '__main__':
             ALL_INPUTS.add(h)
             OUT.append(row)
     with gzip.open(f'/{ROOTDIR}/data/processed_{x}.csv.gz', 'w+t') as outf:
-      writer = csv.DictWriter(outf,['c','unopt','opt'])
+      writer = csv.DictWriter(outf,['c','unopt','opt','unopt_asm','opt_asm'])
       writer.writeheader()
+      for row in OUT:
+        if 'opt' not in row:
+          print()
       writer.writerows(OUT)
 
