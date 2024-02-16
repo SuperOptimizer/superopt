@@ -4,13 +4,18 @@ import gzip
 import platform
 import multiprocessing
 
-from riscv import tokenize, tkn
+
 from utils import  ROOTDIR, TMP
 from gen import compile, yarpgen
 
+ARCH = 'x86'
+if ARCH == 'riscv':
+  from riscv import tokenize, tkn
+else:
+  from x86 import tokenize, tkn
 
 
-ARCH = 'riscv'
+
 
 if platform.system() == 'Linux':
   if ARCH == 'riscv':
@@ -60,6 +65,7 @@ def gen(uuid):
       opt   = tokenize(compiled['opt'],  False, 256)
       if opt is None:
         continue
+      continue
       #sometimes 'PAD' doesn't show up in the input
       #I _assume_ this is because we generated exactly 256 tokens
       if tkn('PAD') in unopt:

@@ -184,8 +184,8 @@ def yarpgen(uuid):
 def compile(path: str, cc: str, strip: str, objdump: str):
   preprocessed = Popen(f'{cc} -E {path}'.split(), stdout=PIPE, stderr=PIPE)
 
-  unopt = Popen(f'{cc} {path} -o {path}.unopt.o -O0 -Wall -c'.split(), stdout=PIPE, stderr=PIPE)
-  opt = Popen(f'{cc} {path} -o {path}.opt.o -O3 -Wall -c'.split(), stdout=PIPE, stderr=PIPE)
+  unopt = Popen(f'{cc} {path} -o {path}.unopt.o -O0 -Wall -fcf-protection=none -march=native -c'.split(), stdout=PIPE, stderr=PIPE)
+  opt = Popen(f'{cc} {path} -o {path}.opt.o -O3 -Wall -fcf-protection=none -march=native -c'.split(), stdout=PIPE, stderr=PIPE)
 
   code, _ = preprocessed.communicate()
   unopt_stdout, unopt_stderr = unopt.communicate()
