@@ -122,6 +122,7 @@ def train(rank, world_size):
 
   model = XTransformer(
     dim = DIM,
+    pad_value=tkn('PAD'),
     tie_token_emb = True,
     enc_attn_flash = True,
     dec_attn_flash = True,
@@ -133,7 +134,21 @@ def train(rank, world_size):
     dec_num_tokens = NUM_TOKENS,
     dec_depth = ENC_DEPTH,
     dec_heads = ENC_HEADS,
-    dec_max_seq_len = DEC_SEQ_LEN)
+    dec_max_seq_len = DEC_SEQ_LEN,
+    attn_num_mem_kv=16,
+    num_memory_tokens=20,
+    use_simple_rmsnorm=True,
+    ff_no_bias=True,
+    ff_swish=True,
+    ff_glu=True,
+    attn_kv_heads=2,
+    attn_gate_values=True,
+    sandwich_coef=6,
+    shift_tokens = 1,
+    use_abs_pos_emb = False,
+    rotary_xpos = True
+
+  )
 
   if DEVICE == 'cuda':
     model = model.cuda(device=rank)
