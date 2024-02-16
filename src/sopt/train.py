@@ -33,7 +33,7 @@ if DEVICE == 'cuda':
   if '2060' in torch.cuda.get_device_name():
     DIM = 512
     BATCH_SIZE = 8
-    GENERATE_EVERY = 10
+    GENERATE_EVERY = 100
     ENC_DEPTH = 4
     ENC_HEADS = 4
     DEC_DEPTH = 4
@@ -42,7 +42,7 @@ if DEVICE == 'cuda':
   elif 'V100' in torch.cuda.get_device_name():
     DIM = 1024
     BATCH_SIZE = 32
-    GENERATE_EVERY = 100
+    GENERATE_EVERY = 500
     ENC_DEPTH = 8
     ENC_HEADS = 8
     DEC_DEPTH = 8
@@ -53,7 +53,7 @@ if DEVICE == 'cuda':
         '3090' in torch.cuda.get_device_name()):
     DIM = 1024
     BATCH_SIZE = 32
-    GENERATE_EVERY = 200
+    GENERATE_EVERY = 1000
     ENC_DEPTH = 10
     ENC_HEADS = 10
     DEC_DEPTH = 10
@@ -62,7 +62,7 @@ if DEVICE == 'cuda':
   elif 'A100' in torch.cuda.get_device_name():
     DIM = 2048
     BATCH_SIZE = 64
-    GENERATE_EVERY = 200
+    GENERATE_EVERY = 2000
     ENC_DEPTH = 20
     ENC_HEADS = 20
     DEC_DEPTH = 20
@@ -146,7 +146,16 @@ def train(rank, world_size):
     sandwich_coef=6,
     shift_tokens = 1,
     use_abs_pos_emb = False,
-    rotary_xpos = True
+    rotary_xpos = True,
+    attn_sparse_topk=8,
+    attn_talking_heads=True,
+    attn_on_attn=True,
+    macaron=True,
+    gate_residual=True,
+    dynamic_pos_bias=True,
+    dynamic_pos_bias_log_distance=True,
+    resi_dual=True,  # set this to True
+    resi_dual_scale=0.1,
 
   )
 
@@ -175,7 +184,18 @@ def train(rank, world_size):
   training_data = []
   db_idx = rank
 
-  for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
+  iterations = 0
+  if DEVICE == 'cuda':
+    if os.path.exists(f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt'):
+      print(f"loading /{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt")
+      checkpoint = torch.load(f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt')
+      model.load_state_dict(checkpoint['model_state_dict'])
+      optim.load_state_dict(checkpoint['optimizer_state_dict'])
+      iterations = checkpoint['iterations']
+      loss = checkpoint['loss']
+      db_idx = checkpoint['db_idx']
+
+  for i in tqdm.tqdm(range(iterations,NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
 
@@ -199,38 +219,40 @@ def train(rank, world_size):
       print(f'total    : {info.total // 1024 // 1024}MB')
       print(f'free     : {info.free // 1024 // 1024}MB')
       print(f'used     : {info.used // 1024 // 1024}MB')
-    elif i % GENERATE_EVERY == 0:
+    if i % GENERATE_EVERY == 0:
       with FSDP.summon_full_params(model, writeback=False, recurse=False):
         if DEVICE == 'cuda':
-          torch.save({'epoch':i,
-                      'model_state_dict':model.state_dict(),
-                      'optimizer_state_dict':optim.state_dict(),
-                      'loss':loss.item(),
-                      'scaler':scaler.state_dict(),
-                      'scheduler':scheduler.state_dict()},
-                     f'/{ROOTDIR}/checkpoint.pt')
-
-        model.eval()
-        src, src_mask, tgt, unopt_asm, opt_asm, training_data, db_idx = cycle(training_data, db_idx)
-        src, src_mask, tgt, unopt_asm, opt_asm = src[:1], src_mask[:1], tgt[:1], unopt_asm[:1][0] ,opt_asm[:1][0]
-        start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
-        sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
-        #the target output always includes the 'DECSTART' token whereas the sampled output does not
-        #so shift the output left one token to delete it
-        for x in range(DEC_SEQ_LEN-1):
-          tgt[0,x] = tgt[0,x+1]
-        incorrects = (tgt != sample).sum()
-        print_stmt = f'\nRANK: {rank} start\n'
-        print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0])} \n"
-        print_stmt += f"\ninput asm:  \n{unopt_asm} \n"
-        #print_stmt += f"predicted tokens:  \n{sample.tolist()} \n"
-        #print_stmt += f"actual tokens:     \n{tgt.tolist()[0]} \n"
-        print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist())}\n"
-        print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0])}\n"
-        print_stmt += f"\nactual asm:     \n{opt_asm}\n"
-        print_stmt += f"\nincorrects: {incorrects}\n"
-        print_stmt += f'\nRANK: {rank} end\n'
-        print(print_stmt)
+          torch.save({
+            'iterations':i,
+            'model_state_dict':model.state_dict(),
+            'optimizer_state_dict':optim.state_dict(),
+            'loss':loss.item(),
+            'scaler':scaler.state_dict(),
+            'scheduler':scheduler.state_dict(),
+            'db_idx':db_idx},
+            f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt')
+    if i % GENERATE_EVERY == 0:
+      model.eval()
+      src, src_mask, tgt, unopt_asm, opt_asm, training_data, db_idx = cycle(training_data, db_idx)
+      src, src_mask, tgt, unopt_asm, opt_asm = src[:1], src_mask[:1], tgt[:1], unopt_asm[:1][0] ,opt_asm[:1][0]
+      start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
+      sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
+      #the target output always includes the 'DECSTART' token whereas the sampled output does not
+      #so shift the output left one token to delete it
+      for x in range(DEC_SEQ_LEN-1):
+        tgt[0,x] = tgt[0,x+1]
+      incorrects = (tgt != sample).sum()
+      print_stmt = f'\nRANK: {rank} start\n'
+      print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0])} \n"
+      print_stmt += f"\ninput asm:  \n{unopt_asm} \n"
+      #print_stmt += f"predicted tokens:  \n{sample.tolist()} \n"
+      #print_stmt += f"actual tokens:     \n{tgt.tolist()[0]} \n"
+      print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist())}\n"
+      print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0])}\n"
+      print_stmt += f"\nactual asm:     \n{opt_asm}\n"
+      print_stmt += f"\nincorrects: {incorrects}\n"
+      print_stmt += f'\nRANK: {rank} end\n'
+      print(print_stmt)
 
   if world_size > 1:
     torch.distributed.destroy_process_group()
