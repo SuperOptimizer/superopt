@@ -66,7 +66,12 @@ INSTRS = ['lui', 'auipc', 'addi', 'slti', 'sltiu', 'xori', 'ori', 'andi', 'slli'
 ENCODER_SHORTHAND = []
 DECODER_SHORTHAND = []
 
-METAS = ['PAD', 'ENCSTART', 'ENCEND', 'DECSTART', 'DECEND']
+METAS = [
+  'PAD', 'ENCSTART', 'ENCEND', 'DECSTART', 'DECEND',
+  # We need some way of signifying exported functions, so we'll create a FUNC0 - FUNC15 tokens that
+  # pertain to the start of exported functions
+  'FUNC0','FUNC1','FUNC2','FUNC3','FUNC4','FUNC5','FUNC6','FUNC7','FUNC8','FUNC9','FUNC10','FUNC11','FUNC12','FUNC13','FUNC14','FUNC15',
+]
 
 
 IMM_TKN_OFF     = 0
