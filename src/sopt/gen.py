@@ -202,4 +202,17 @@ def compile(path: str, cc: str, strip: str, objdump: str):
   unopt_asm, _ = unopt.communicate()
   opt_asm, _ = opt.communicate()
 
-  return {'c': code.decode('utf-8'), 'unopt': unopt_asm.decode('utf-8'), 'opt': opt_asm.decode('utf-8')}
+  c = code.decode('utf-8')
+  unopt_asm = unopt_asm.decode('utf-8')
+  opt_asm = opt_asm.decode('utf-8')
+
+  new_c = ''
+  for line in c.split('\n'):
+    if not line.startswith('#'):
+      new_c += line + '\n'
+
+  new_unopt_asm =  '\n'.join(unopt_asm.split('\n')[3:])
+  new_opt_asm =  '\n'.join(opt_asm.split('\n')[3:])
+
+
+  return {'c': new_c, 'unopt': new_unopt_asm, 'opt': new_opt_asm}
