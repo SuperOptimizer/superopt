@@ -79,7 +79,7 @@ if __name__ == '__main__':
   ncpu = multiprocessing.cpu_count()
   print(f"spawning {ncpu} threads")
   ALL_INPUTS = set()
-  for x in range(1):
+  for x in range(1000):
     print('processed',x)
     for uuid in range(ncpu):
       os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
