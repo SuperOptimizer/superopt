@@ -50,8 +50,8 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
     else:
       assert False
   else:
-    dim = 256
-    batch_size = 2
+    dim = 512
+    batch_size = 4
     generate_every = 100
     enc_depth = 4
     enc_heads = 4

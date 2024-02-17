@@ -120,15 +120,9 @@ def detokenize_char(prog:[int]):
   formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.GAS)
   for instr in decoder:
     disasm = formatter.format(instr)
-    # You can also get only the mnemonic string, or only one or more of the operands:
-    #   mnemonic_str = formatter.format_mnemonic(instr, FormatMnemonicOptions.NO_PREFIXES)
-    #   op0_str = formatter.format_operand(instr, 0)
-    #   operands_str = formatter.format_all_operands(instr)
-
     start_index = instr.ip - 0
-    bytes_str = bytes(prog)[start_index:start_index + instr.len].hex().upper()
-    # Eg. "00007FFAC46ACDB2 488DAC2400FFFFFF     lea       rbp,[rsp-100h]"
-    ret.append(f"{instr.ip:016X} {bytes_str:20} {disasm}\n")
+    bytes_str = bytes(prog)[start_index:start_index + instr.len].hex().lower()
+    ret.append(f"\t{instr.ip:0X}\t{bytes_str}\t{disasm}")
   return '\n'.join(ret)
 
 
@@ -153,4 +147,8 @@ def tokenize_char(prog: str, encoder: bool, ctxlen: int):
         pc,bytes = line.split('\t')
       for byte in bytes.split():
         ret.append(int(byte,16))
+  if len(ret) > ctxlen:
+    return None
+  for x in range(ctxlen - len(ret)):
+    ret.append(tkn('PAD'))
   return ret
