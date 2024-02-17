@@ -1,3 +1,4 @@
+import iced_x86
 
 #x86 currently uses a character level encoding scheme
 #so 256 tokens for byte values, plus 2 for PAD and DECSTART
@@ -94,7 +95,7 @@ def tokenize(prog: str, encoder: bool, ctxlen: int):
       if '#' in line:
         line = line.split('#')[0]
       line = line.strip()
-      pc, asm = line.split('\t')
+      pc, bytes, asm = line.split('\t')
       try:
         instr,args = asm.split()
 
@@ -110,3 +111,46 @@ def tokenize(prog: str, encoder: bool, ctxlen: int):
   print(sorted(ALL_ARGS))
   print(len(ALL_ARGS))
   return True
+
+def detokenize_char(prog:[int]):
+  ret = []
+  prog = [x for x in prog if x < 256]
+  decoder = iced_x86.Decoder(64, bytes(prog), 0)
+
+  formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.GAS)
+  for instr in decoder:
+    disasm = formatter.format(instr)
+    # You can also get only the mnemonic string, or only one or more of the operands:
+    #   mnemonic_str = formatter.format_mnemonic(instr, FormatMnemonicOptions.NO_PREFIXES)
+    #   op0_str = formatter.format_operand(instr, 0)
+    #   operands_str = formatter.format_all_operands(instr)
+
+    start_index = instr.ip - 0
+    bytes_str = bytes(prog)[start_index:start_index + instr.len].hex().upper()
+    # Eg. "00007FFAC46ACDB2 488DAC2400FFFFFF     lea       rbp,[rsp-100h]"
+    ret.append(f"{instr.ip:016X} {bytes_str:20} {disasm}\n")
+  return '\n'.join(ret)
+
+
+def tokenize_char(prog: str, encoder: bool, ctxlen: int):
+  '''character level tokenizer'''
+  if 'text.unlikely' in prog:
+    return None
+  ret = []
+  if not encoder:
+    ret.append(tkn('DECSTART'))
+  in_disasm = False
+  for line in prog.split('\n'):
+    if line == '':
+      continue
+    if line.startswith('00000'):
+      in_disasm = True
+      continue
+    if in_disasm:
+      try:
+        pc,bytes,asm = line.split('\t')
+      except:
+        pc,bytes = line.split('\t')
+      for byte in bytes.split():
+        ret.append(int(byte,16))
+  return ret

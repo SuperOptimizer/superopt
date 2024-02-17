@@ -184,8 +184,8 @@ def yarpgen(uuid):
 def compile(path: str, cc: str, strip: str, objdump: str):
   preprocessed = Popen(f'{cc} -E {path}'.split(), stdout=PIPE, stderr=PIPE)
 
-  unopt = Popen(f'{cc} {path} -o {path}.unopt.o -O0 -Wall -fcf-protection=none -march=native -c'.split(), stdout=PIPE, stderr=PIPE)
-  opt = Popen(f'{cc} {path} -o {path}.opt.o -O3 -Wall -fcf-protection=none -march=native -c'.split(), stdout=PIPE, stderr=PIPE)
+  unopt = Popen(f'{cc} {path} -o {path}.unopt.o -O0 -Wall -fcf-protection=none -c'.split(), stdout=PIPE, stderr=PIPE)
+  opt = Popen(f'{cc} {path} -o {path}.opt.o -O3 -Wall -fcf-protection=none  -c'.split(), stdout=PIPE, stderr=PIPE)
 
   code, _ = preprocessed.communicate()
   unopt_stdout, unopt_stderr = unopt.communicate()
@@ -196,8 +196,8 @@ def compile(path: str, cc: str, strip: str, objdump: str):
   unopt.wait()
   opt.wait()
 
-  unopt = Popen(f'{objdump} -M no-aliases --no-show-raw-insn -d {path}.unopt.o'.split(),stdout=PIPE)
-  opt = Popen(f'{objdump} -M no-aliases --no-show-raw-insn -d {path}.opt.o'.split(),stdout=PIPE)
+  unopt = Popen(f'{objdump} -M no-aliases -d {path}.unopt.o'.split(),stdout=PIPE) #--no-show-raw-insn
+  opt = Popen(f'{objdump} -M no-aliases  -d {path}.opt.o'.split(),stdout=PIPE) #--no-show-raw-insn
 
   unopt_asm, _ = unopt.communicate()
   opt_asm, _ = opt.communicate()

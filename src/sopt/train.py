@@ -6,12 +6,20 @@ import os
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import gzip
 import ast
-from riscv import NUM_TOKENS, tokenize, tkn, detokenize
 
 from utils import ROOTDIR, timeit, report_cuda_size
 from model import get_model
 
-GENERATE_EVERY = 1000
+ARCH = 'x86'
+
+if ARCH == 'riscv':
+  from riscv import NUM_TOKENS, tokenize, tkn, detokenize
+elif ARCH == 'x86':
+  from x86 import NUM_TOKENS, tokenize_char, tkn, detokenize_char
+
+
+
+GENERATE_EVERY = 10
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 
@@ -118,10 +126,10 @@ def train(rank, world_size, device):
         tgt[0,x] = tgt[0,x+1]
       incorrects = (tgt != sample).sum()
       print_stmt = f'\nRANK: {rank} start\n'
-      print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0])} \n"
+      print_stmt += f"\ninput tokenized:  \n{detokenize_char(src.tolist()[0])} \n"
       print_stmt += f"\ninput asm:  \n{unopt_asm} \n"
-      print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist())}\n"
-      print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0])}\n"
+      print_stmt += f"\npredicted detokenized:  \n{detokenize_char(sample.tolist())}\n"
+      print_stmt += f"\nactual detokenized:     \n{detokenize_char(tgt.tolist()[0])}\n"
       print_stmt += f"\nactual asm:     \n{opt_asm}\n"
       print_stmt += f"\nincorrects: {incorrects}\n"
       print_stmt += f'\nRANK: {rank} end\n'
@@ -132,7 +140,8 @@ def train(rank, world_size, device):
 
 def main():
   if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-    device = 'mps'
+    #device = 'mps'
+    device = 'cpu'
     world_size = 1
   elif torch.cuda.is_available():
     device = 'cuda'

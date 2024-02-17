@@ -3,3 +3,4 @@ x-transformers
 tqdm
 pynvml
 numpy
+iced-x86

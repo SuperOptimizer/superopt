@@ -12,7 +12,7 @@ ARCH = 'x86'
 if ARCH == 'riscv':
   from riscv import tokenize, tkn
 else:
-  from x86 import tokenize, tkn
+  from x86 import tokenize, tokenize_char, tkn
 
 
 
@@ -27,9 +27,18 @@ if platform.system() == 'Linux':
     STRIP = 'strip'
     OBJDUMP = 'objdump'
 elif platform.system() == 'Darwin':
-  CC = 'riscv64-elf-gcc'
-  STRIP = 'riscv64-elf-strip'
-  OBJDUMP = 'riscv64-elf-objdump'
+  if ARCH == 'riscv':
+    CC = 'riscv64-elf-gcc'
+    STRIP = 'riscv64-elf-strip'
+    OBJDUMP = 'riscv64-elf-objdump'
+  elif ARCH == 'x86':
+    CC = 'x86_64-elf-gcc'
+    STRIP = 'x86_64-elf-strip'
+    OBJDUMP = 'x86_64-elf-objdump'
+  elif ARCH == 'aarch64':
+    CC = 'aarch64-elf-gcc'
+    STRIP = 'aarch64-elf-strip'
+    OBJDUMP = 'aarch64-elf-objdump'
 
 def sanity_test():
   ALL_UNOPT = set()
@@ -59,13 +68,12 @@ def gen(uuid):
       compiled = compile(prog, CC, STRIP, OBJDUMP)
       if compiled is None:
         continue
-      unopt = tokenize(compiled['unopt'], True, 768)
+      unopt = tokenize_char(compiled['unopt'], True, 768)
       if unopt is None:
         continue
-      opt   = tokenize(compiled['opt'],  False, 256)
+      opt   = tokenize_char(compiled['opt'],  False, 256)
       if opt is None:
         continue
-      continue
       #sometimes 'PAD' doesn't show up in the input
       #I _assume_ this is because we generated exactly 256 tokens
       if tkn('PAD') in unopt:
