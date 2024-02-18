@@ -433,5 +433,5 @@ def main():
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
-  generate_database()
-  #main()
+  #generate_database()
+  main()
