@@ -208,7 +208,8 @@ def generate_database():
           else:
             ALL_INPUTS.add(h)
             OUT.append(row)
-    with gzip.open(f'/{ROOTDIR}/data/processed_{x}.csv.gz', 'w+t') as outf:
+    num = len(os.listdir(f'/{ROOTDIR}/data/'))
+    with gzip.open(f'/{ROOTDIR}/data/processed_{num}.csv.gz', 'w+t') as outf:
       writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
       writer.writeheader()
       writer.writerows(OUT)
