@@ -44,7 +44,7 @@ elif platform.system() == 'Darwin':
 
 
 
-GENERATE_EVERY = 10
+GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 NUM_TOKENS = 258
