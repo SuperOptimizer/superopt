@@ -146,9 +146,9 @@ def cycle(device, training_data, db_idx, batch_size, encoder_len, decoder_len):
       for entry in reader:
         unopt = list(ast.literal_eval(entry['unopt']))
         opt = list(ast.literal_eval(entry['opt']))
-        if len(unopt) > ENC_SEQ_LEN:
+        if len(unopt) >= ENC_SEQ_LEN:
           continue
-        if len(opt) > DEC_SEQ_LEN:
+        if len(opt) >= DEC_SEQ_LEN:
           continue
         opt.insert(0,tkn('DECSTART'))
         mask = [True]*len(unopt)
