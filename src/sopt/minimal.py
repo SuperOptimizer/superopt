@@ -113,8 +113,8 @@ def compile(code: bytes, cc: str, strip: str):
   unopt_obj = f'{TMP}/{randstring(32)}.o'
   opt_obj = f'{TMP}/{randstring(32)}.o'
 
-  unopt = run(f'{cc} -o {unopt_obj} -O0 -Wall -fcf-protection=none -xc -c -'.split(), input=code, stdout=PIPE,stderr=PIPE)
-  opt = run(f'{cc} -o {opt_obj} -O3 -Wall -fcf-protection=none -xc -c -'.split(), input=code, stdout=PIPE, stderr=PIPE)
+  unopt = run(f'{cc} -o {unopt_obj} -O0 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), input=code, stdout=PIPE,stderr=PIPE)
+  opt = run(f'{cc} -o {opt_obj} -O3 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), input=code, stdout=PIPE, stderr=PIPE)
 
   unopt = run(f'{strip} {unopt_obj}'.split())
   opt = run(f'{strip} {opt_obj}'.split())
@@ -423,5 +423,5 @@ def main():
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
-  #generate_database()
-  main()
+  generate_database()
+  #main()
