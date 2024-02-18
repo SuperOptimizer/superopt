@@ -5,5 +5,5 @@ superopt is an llm for programming language translation, compilation, and optimi
 ## license
 
 - superopt's source code is licensed under the Affero GPLv3 license. 
-- Weights are provided for free under the CC BY-NC 4.0 Deed. 
+- Weights and training data are provided for free under the CC BY-NC 4.0 Deed. 
 - For a commercial license, please visit [superopt.dev](superopt.dev)
