@@ -246,6 +246,15 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
       dec_depth = 10
       dec_heads = 10
       dtype = torch.bfloat16
+    elif 'A6000' in torch.cuda.get_device_name():
+      dim = 1536
+      batch_size = 32
+      generate_every = 1000
+      enc_depth = 12
+      enc_heads = 12
+      dec_depth = 12
+      dec_heads = 12
+      dtype = torch.bfloat16
     elif 'A100' in torch.cuda.get_device_name():
       dim = 2048
       batch_size = 64
