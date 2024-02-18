@@ -4,12 +4,14 @@ import numpy as np
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from  subprocess import PIPE, Popen, run
 import os
+import sentencepiece as spm
 import random
 import string
 import platform
 import ast
 import csv
 import gzip
+import base64
 import shutil
 import time
 from functools import wraps
@@ -52,7 +54,7 @@ ENC_SEQ_LEN = 512
 DEC_SEQ_LEN = 512
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 TMP = '/tmp/sopt'
-DICTIONARY = f'{ROOTDIR}/misc/x86_dictionary'
+DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
 
 
 def timeit(func):
@@ -91,6 +93,25 @@ def tkn(t):
     elif t == 'DECSTART': return 257
   elif isinstance(t, bytes):
     return list(t)
+
+def sentencepiece_train():
+  with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
+    for db_idx in range(43):
+      with gzip.open(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz', 'rt') as f:
+        reader = csv.DictReader(f)
+        for entry in reader:
+          unopt = detokenize(ast.literal_eval(entry['unopt']),f'{ROOTDIR}/misc/zstd_x86_dictionary')
+          opt = detokenize(ast.literal_eval(entry['opt']),f'{ROOTDIR}/misc/zstd_x86_dictionary')
+          outf.write(base64.b64encode(unopt).decode('utf-8') + '\n')
+          outf.write(base64.b64encode(opt).decode('utf-8') + '\n')
+          ret = tokenize_sp(base64.b64encode(unopt).decode('utf-8'))
+          print()
+
+def tokenize_sp(data: str):
+  sp = spm.SentencePieceProcessor()
+  sp.load(f'{ROOTDIR}/misc/x86sopt.model')
+  tokens = sp.encode(data)
+  return tokens
 
 def tokenize(data: bytes, dictionary: str) -> bytes:
   ret = run(f"zstd -D {dictionary} --ultra -22 -c -".split(), input=data,  stdout=PIPE, stderr=PIPE)
@@ -177,8 +198,8 @@ def gen(uuid):
           print(x)
       prog = yarpgen(uuid, CC)
       unopt, opt = compile(prog, CC, STRIP)
-      unopt = tokenize(unopt, f'{ROOTDIR}/misc/x86_dictionary')
-      opt = tokenize(opt, f'{ROOTDIR}/misc/x86_dictionary')
+      unopt = tokenize(unopt, f'{ROOTDIR}/misc/zstd_x86_dictionary')
+      opt = tokenize(opt, f'{ROOTDIR}/misc/zstd_x86_dictionary')
       if h := hash(unopt) in ALL_INPUTS:
         continue
       ALL_INPUTS.add(h)
@@ -434,4 +455,5 @@ def main():
 
 if __name__ == '__main__':
   #generate_database()
-  main()
+  #main()
+  sentencepiece_train()
