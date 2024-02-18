@@ -417,7 +417,6 @@ def main():
   else:
     device = 'cpu'
     world_size = 1
-  device = 'cpu'
   if world_size <= 1:
     train(0,1,device)
   else:
