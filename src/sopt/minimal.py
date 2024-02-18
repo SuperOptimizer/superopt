@@ -350,7 +350,7 @@ def train(rank, world_size, device):
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
 
   training_data = []
-  db_idx = rank
+  db_idx = random.choice(range(len(os.listdir(f'/{ROOTDIR}/data/'))))
 
   iterations = 0
   if device == 'cuda' and os.path.exists(f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt'):
