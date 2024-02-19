@@ -93,6 +93,13 @@ def tkn_sp(t):
     return 32769
   assert False
 
+def tkn_char(t):
+  if t == 'DECSTART':
+    return 257
+  elif t == 'PAD':
+    return 256
+  assert False
+
 def zstd_train():
   os.makedirs(f'/{TMP}/all_objs', exist_ok=True)
   for db_idx in range(len(os.listdir(f'/{ROOTDIR}/cleandata/')))[:25]:
@@ -208,11 +215,11 @@ def cycle(device, training_data, db_idx, batch_size):
         assert detokenize_char(tokenize_char(unopt)) == unopt
         if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
           continue
-        opt_tokens.insert(0,tkn_sp('DECSTART'))
+        opt_tokens.insert(0,tkn_char('DECSTART'))
         mask = [True]*len(unopt_tokens)
         mask.extend([False]*(ENC_SEQ_LEN-len(unopt_tokens)))
-        unopt_tokens.extend([tkn_sp('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
-        opt_tokens.extend([tkn_sp('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
+        unopt_tokens.extend([tkn_char('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
+        opt_tokens.extend([tkn_char('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
         training_data.append([unopt_tokens, opt_tokens, mask])
       db_idx += 1
       if not os.path.exists(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz'):
@@ -450,8 +457,8 @@ def train(rank, world_size, device):
     torch.distributed.init_process_group(backend='nccl', rank=rank,world_size=world_size)
     torch.cuda.set_device(rank)
 
-  model, dtype, batch_size, generate_every = get_model(device, tkn_sp('PAD'), NUM_TOKENS,rank,world_size)
-
+  model, dtype, batch_size, generate_every = get_model(device, tkn_char('PAD'), NUM_TOKENS,rank,world_size)
+  print("got model")
   optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
   if device == 'cuda':
     scaler = torch.cuda.amp.GradScaler()
@@ -506,7 +513,7 @@ def train(rank, world_size, device):
       model.eval()
       src, src_mask, tgt, training_data, db_idx = cycle(device, training_data, db_idx, batch_size)
       src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
-      start_tokens = torch.tensor([tkn_sp('DECSTART')]).to(device)
+      start_tokens = torch.tensor([tkn_char('DECSTART')]).to(device)
       sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
       #the target output always includes the 'DECSTART' token whereas the sampled output does not
       #so shift the output left one token to delete it
@@ -536,6 +543,7 @@ def main():
     device = 'cpu'
     world_size = 1
   if world_size <= 1:
+    print("spawning single gpu")
     train(0,1,device)
   else:
     print(f"spawning {world_size} gpu threads")
