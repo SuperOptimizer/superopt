@@ -45,14 +45,12 @@ elif platform.system() == 'Darwin':
     OBJDUMP = 'aarch64-elf-objdump'
 
 
-
-
-GENERATE_EVERY = 1000
+GENERATE_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 NUM_TOKENS = 32768 + 2
-ENC_SEQ_LEN = 1024
-DEC_SEQ_LEN = 1024
+ENC_SEQ_LEN = 2048
+DEC_SEQ_LEN = 2048
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 TMP = '/tmp/sopt'
 DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
@@ -143,6 +141,47 @@ def detokenize_sp(tokens: [int]):
     tokens = "invalid".encode('utf-8')
   return tokens
 
+def tokenize_char(data: bytes):
+  '''0-255 encode that data
+     256 = PAD
+     257 = DECSTART
+     258 - 511 = tokenval - 2 zeroes in a row
+  '''
+  ret = []
+  nzero = 0
+  for b in list(data):
+    if b != 0:
+      if nzero == 0:
+        ret.append(b)
+      elif nzero == 1:
+        ret.append(0)
+        ret.append(b)
+        nzero = 0
+      else:
+        ret.append(nzero + 256)
+        ret.append(b)
+        nzero = 0
+    else:
+      if nzero == 254:
+        ret.append(511)
+        nzero = 0
+      else:
+        nzero +=1
+  if nzero > 0:
+    ret.append(nzero + 256)
+  return ret
+
+def detokenize_char(tokens: [int]):
+  ret = []
+  for t in tokens:
+    if 0 <= t <= 255:
+      ret.append(t)
+    elif 258 <= t <= 511:
+      ret.extend([0] * (t - 256))
+    else:
+      pass #no need to pass meta tokens to detokenize
+  return bytes(ret)
+
 def zstd_compress(data: bytes, dictionary: str) -> bytes:
   ret = run(f"zstd -D {dictionary} --ultra -22 -c -".split(), input=data,  stdout=PIPE, stderr=PIPE)
   return ret.stdout
@@ -161,17 +200,20 @@ def cycle(device, training_data, db_idx, batch_size):
     with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz','rt') as f:
       reader = csv.DictReader(f)
       for entry in reader:
-        unopt = tokenize_sp(ast.literal_eval(entry['unopt']))
-        opt = tokenize_sp(ast.literal_eval(entry['opt']))
-        asdf = detokenize_sp(unopt)
-        if len(unopt) >= ENC_SEQ_LEN or len(opt) >= DEC_SEQ_LEN:
+        unopt = ast.literal_eval(entry['unopt'])
+        opt = ast.literal_eval(entry['opt'])
+        unopt_tokens = tokenize_char(unopt)
+        opt_tokens = tokenize_char(opt)
+        asdf = detokenize_char(unopt_tokens)
+        assert detokenize_char(tokenize_char(unopt)) == unopt
+        if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
           continue
-        opt.insert(0,tkn_sp('DECSTART'))
-        mask = [True]*len(unopt)
-        mask.extend([False]*(ENC_SEQ_LEN-len(unopt)))
-        unopt.extend([tkn_sp('PAD')] * (ENC_SEQ_LEN - len(unopt)))
-        opt.extend([tkn_sp('PAD')] * (DEC_SEQ_LEN - len(opt)))
-        training_data.append([unopt, opt, mask])
+        opt_tokens.insert(0,tkn_sp('DECSTART'))
+        mask = [True]*len(unopt_tokens)
+        mask.extend([False]*(ENC_SEQ_LEN-len(unopt_tokens)))
+        unopt_tokens.extend([tkn_sp('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
+        opt_tokens.extend([tkn_sp('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
+        training_data.append([unopt_tokens, opt_tokens, mask])
       db_idx += 1
       if not os.path.exists(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz'):
         db_idx = 0
@@ -261,7 +303,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
   if device == 'cuda':
     if '2060' in torch.cuda.get_device_name():
       dim = 512
-      batch_size = 4
+      batch_size = 1
       generate_every = 100
       enc_depth = 4
       enc_heads = 4
@@ -270,7 +312,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
       dtype = torch.float16
     elif 'V100' in torch.cuda.get_device_name():
       dim = 1024
-      batch_size = 32
+      batch_size = 1
       generate_every = 500
       enc_depth = 8
       enc_heads = 8
@@ -281,7 +323,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
           'A5000' in torch.cuda.get_device_name() or
           '3090' in torch.cuda.get_device_name()):
       dim = 2048
-      batch_size = 32
+      batch_size = 1
       generate_every = 1000
       enc_depth = 10
       enc_heads = 10
@@ -290,7 +332,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
       dtype = torch.bfloat16
     elif 'A6000' in torch.cuda.get_device_name():
       dim = 1536
-      batch_size = 32
+      batch_size = 1
       generate_every = 1000
       enc_depth = 12
       enc_heads = 12
@@ -299,7 +341,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
       dtype = torch.bfloat16
     elif 'A100' in torch.cuda.get_device_name():
       dim = 2048
-      batch_size = 64
+      batch_size = 1
       generate_every = 2000
       enc_depth = 20
       enc_heads = 20
@@ -310,7 +352,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
       assert False
   else:
     dim = 512
-    batch_size = 4
+    batch_size = 1
     generate_every = 100
     enc_depth = 4
     enc_heads = 4
@@ -333,27 +375,51 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
     dec_depth=dec_depth,
     dec_heads=dec_heads,
     dec_max_seq_len=DEC_SEQ_LEN,
-    attn_num_mem_kv=16,
-    num_memory_tokens=20,
-    use_simple_rmsnorm=True,
-    ff_no_bias=True,
-    ff_swish=True,
-    ff_glu=True,
-    attn_kv_heads=2,
-    attn_gate_values=True,
-    sandwich_coef=6,
-    shift_tokens=1,
-    use_abs_pos_emb=False,
-    rotary_xpos=True,
-    attn_sparse_topk=8,
-    attn_talking_heads=True,
-    attn_on_attn=True,
-    macaron=True,
-    gate_residual=True,
-    dynamic_pos_bias=True,
-    dynamic_pos_bias_log_distance=True,
-    resi_dual=True,
-    resi_dual_scale=0.1, )
+
+    enc_attn_num_mem_kv=16,
+    enc_num_memory_tokens=20,
+    enc_use_simple_rmsnorm=True,
+    enc_ff_no_bias=True,
+    enc_ff_swish=True,
+    enc_ff_glu=True,
+    enc_attn_kv_heads=2,
+    enc_attn_gate_values=True,
+    #enc_sandwich_coef=6,
+    enc_shift_tokens=1,
+    enc_use_abs_pos_emb=False,
+    #enc_rotary_xpos=True,
+    #enc_attn_sparse_topk=8,
+    #enc_attn_talking_heads=True,
+    enc_attn_on_attn=True,
+    enc_macaron=True,
+    enc_gate_residual=True,
+    #enc_dynamic_pos_bias=True,
+    #enc_dynamic_pos_bias_log_distance=True,
+    enc_resi_dual=True,
+    enc_resi_dual_scale=0.1,
+
+    dec_attn_num_mem_kv=16,
+    dec_num_memory_tokens=20,
+    dec_use_simple_rmsnorm=True,
+    dec_ff_no_bias=True,
+    dec_ff_swish=True,
+    dec_ff_glu=True,
+    dec_attn_kv_heads=2,
+    dec_attn_gate_values=True,
+    #dec_sandwich_coef=6,
+    dec_shift_tokens=1,
+    dec_use_abs_pos_emb=False,
+    #dec_rotary_xpos=True,
+    #dec_attn_sparse_topk=8,
+    #dec_attn_talking_heads=True,
+    dec_attn_on_attn=True,
+    dec_macaron=True,
+    dec_gate_residual=True,
+    #dec_dynamic_pos_bias=True,
+    #dec_dynamic_pos_bias_log_distance=True,
+    dec_resi_dual=True,
+    dec_resi_dual_scale=0.1,
+  )
 
   if device == 'cuda':
     model = model.cuda(device=rank)
@@ -448,9 +514,9 @@ def train(rank, world_size, device):
         tgt[0,x] = tgt[0,x+1]
       incorrects = (tgt != sample).sum()
       print_stmt = f'\nRANK: {rank} start\n'
-      print_stmt += f"\ninput tokenized:  \n{detokenize_sp(src.tolist()[0])} \n"
-      print_stmt += f"\npredicted detokenized:  \n{detokenize_sp(sample.tolist())}\n"
-      print_stmt += f"\nactual detokenized:     \n{detokenize_sp(tgt.tolist()[0])}\n"
+      print_stmt += f"\ninput tokenized:  \n{detokenize_char(src.tolist()[0])} \n"
+      print_stmt += f"\npredicted detokenized:  \n{detokenize_char(sample.tolist())}\n"
+      print_stmt += f"\nactual detokenized:     \n{detokenize_char(tgt.tolist()[0])}\n"
       print_stmt += f"\nincorrects: {incorrects}\n"
       print_stmt += f'\nRANK: {rank} end\n'
       print(print_stmt)
