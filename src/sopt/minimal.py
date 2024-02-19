@@ -124,6 +124,10 @@ def detokenize_sp(tokens: [int]):
     sp.load(f'{ROOTDIR}/misc/x86_zstd_sopt.model')
   tokens = [t for t in tokens if t < NUM_TOKENS-2]
   tokens = sp.decode(tokens)
+  try:
+    tokens = base64.b64decode(tokens)
+  except:
+    tokens = "invalid".encode('utf-8')
   return tokens
 
 def zstd_compress(data: bytes, dictionary: str) -> bytes:
@@ -334,8 +338,8 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
   if world_size > 1:
     model = FSDP(model, use_orig_params=True)
 
-  if device in ['cuda']:
-    model = torch.compile(model)
+  #if device in ['cuda']:
+  #  model = torch.compile(model)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
   params = sum([np.prod(p.size()) for p in model_parameters])
@@ -361,7 +365,7 @@ def train(rank, world_size, device):
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
 
   training_data = []
-  db_idx = random.choice(range(len(os.listdir(f'/{ROOTDIR}/data/'))))
+  db_idx = 0
 
   iterations = 0
   if device == 'cuda' and os.path.exists(f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt'):
@@ -417,9 +421,9 @@ def train(rank, world_size, device):
         tgt[0,x] = tgt[0,x+1]
       incorrects = (tgt != sample).sum()
       print_stmt = f'\nRANK: {rank} start\n'
-      print_stmt += f"\ninput tokenized:  \n{detokenize_sp(src.tolist()[0])} \n"
-      print_stmt += f"\npredicted detokenized:  \n{detokenize_sp(sample.tolist())}\n"
-      print_stmt += f"\nactual detokenized:     \n{detokenize_sp(tgt.tolist()[0])}\n"
+      print_stmt += f"\ninput tokenized:  \n{zstd_decompress(detokenize_sp(src.tolist()[0]),DICTIONARY)} \n"
+      print_stmt += f"\npredicted detokenized:  \n{zstd_decompress(detokenize_sp(sample.tolist()),DICTIONARY)}\n"
+      print_stmt += f"\nactual detokenized:     \n{zstd_decompress(detokenize_sp(tgt.tolist()[0]),DICTIONARY)}\n"
       print_stmt += f"\nincorrects: {incorrects}\n"
       print_stmt += f'\nRANK: {rank} end\n'
       print(print_stmt)
