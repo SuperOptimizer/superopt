@@ -6,6 +6,7 @@ from  subprocess import PIPE, Popen, run
 import os
 import sentencepiece as spm
 import random
+import sys
 import string
 import platform
 import ast
@@ -104,7 +105,6 @@ def sentencepiece_train():
           opt = ast.literal_eval(entry['opt'])
           outf.write(base64.b64encode(unopt).decode('utf-8') + '\n')
           outf.write(base64.b64encode(opt).decode('utf-8') + '\n')
-          print()
 
 sp = None
 
@@ -456,7 +456,16 @@ def main():
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
-  #generate_database()
-  #clean_database()
-  main()
-  #sentencepiece_train()
+  if len(sys.argv) != 2:
+    print("you must specify a trask: train, infer, gen, or sentencepiece")
+    print("defaulting to train")
+    sys.argv.append("train")
+  if sys.argv[1] == 'train':
+    main()
+  elif sys.argv[1] == 'gen':
+    generate_database()
+    clean_database()
+  elif sys.argv[1] == 'infer':
+    pass
+  elif sys.argv[1] == 'sentencepiece':
+    sentencepiece_train()
