@@ -197,7 +197,9 @@ def gen(uuid):
       if h := hash(unopt) in ALL_INPUTS:
         continue
       ALL_INPUTS.add(h)
-      writer.writerow({'c': prog, 'unopt': zstd_compress(unopt,DICTIONARY), 'opt': zstd_compress(opt, DICTIONARY)})
+      if len(unopt) > 4096 or len(opt) > 4096:
+        continue
+      writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
 
 def generate_database():
   ncpu = multiprocessing.cpu_count()*2
@@ -449,6 +451,6 @@ def main():
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
-  #generate_database()
-  main()
+  generate_database()
+  #main()
   #sentencepiece_train()
