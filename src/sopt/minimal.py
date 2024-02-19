@@ -50,7 +50,7 @@ elif platform.system() == 'Darwin':
 GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
-NUM_TOKENS = 8194
+NUM_TOKENS = 32768 + 2
 ENC_SEQ_LEN = 1024
 DEC_SEQ_LEN = 1024
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
@@ -90,9 +90,9 @@ def randstring(n):
 
 def tkn_sp(t):
   if t == 'DECSTART':
-    return 8192
+    return 32768
   elif t == 'PAD':
-    return 8193
+    return 32769
   assert False
 
 def zstd_train():
@@ -125,7 +125,7 @@ def tokenize_sp(data: bytes):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86_zstd_sopt.model')
+    sp.load(f'{ROOTDIR}/misc/x86_sopt_32k.model')
   tokens = sp.encode(base64.b64encode(data).decode('utf-8'))
   return tokens
 
@@ -134,7 +134,7 @@ def detokenize_sp(tokens: [int]):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86_zstd_sopt.model')
+    sp.load(f'{ROOTDIR}/misc/x86_sopt_32k.model')
   tokens = [t for t in tokens if t < NUM_TOKENS-2]
   tokens = sp.decode(tokens)
   try:
@@ -163,6 +163,7 @@ def cycle(device, training_data, db_idx, batch_size):
       for entry in reader:
         unopt = tokenize_sp(ast.literal_eval(entry['unopt']))
         opt = tokenize_sp(ast.literal_eval(entry['opt']))
+        asdf = detokenize_sp(unopt)
         if len(unopt) >= ENC_SEQ_LEN or len(opt) >= DEC_SEQ_LEN:
           continue
         opt.insert(0,tkn_sp('DECSTART'))
@@ -260,7 +261,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
   if device == 'cuda':
     if '2060' in torch.cuda.get_device_name():
       dim = 512
-      batch_size = 8
+      batch_size = 4
       generate_every = 100
       enc_depth = 4
       enc_heads = 4
@@ -478,7 +479,7 @@ if __name__ == '__main__':
   if len(sys.argv) != 2:
     print("you must specify a trask: train, infer, gen, clean, zstd, sentencepiece")
     print("defaulting to train")
-    sys.argv.append("gen")
+    sys.argv.append("train")
   if sys.argv[1] == 'train':
     main()
   elif sys.argv[1] == 'gen':
