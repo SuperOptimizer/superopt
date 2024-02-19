@@ -4,3 +4,4 @@ tqdm
 pynvml
 numpy
 iced-x86
+sentencepiece
