@@ -96,7 +96,7 @@ def tkn_sp(t):
 
 def sentencepiece_train():
   with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
-    for db_idx in range(43):
+    for db_idx in range(10):
       with gzip.open(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz', 'rt') as f:
         reader = csv.DictReader(f)
         for entry in reader:
@@ -112,7 +112,7 @@ def tokenize_sp(data: bytes):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86sopt.model')
+    sp.load(f'{ROOTDIR}/misc/x86_zstd_sopt.model')
   tokens = sp.encode(base64.b64encode(data).decode('utf-8'))
   return tokens
 
@@ -121,7 +121,7 @@ def detokenize_sp(tokens: [int]):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86sopt.model')
+    sp.load(f'{ROOTDIR}/misc/x86_zstd_sopt.model')
   tokens = [t for t in tokens if t < NUM_TOKENS-2]
   tokens = sp.decode(tokens)
   return tokens
@@ -137,43 +137,6 @@ def zstd_decompress(data: [int], dictionary: str) -> bytes:
     return ret.stderr + bytes(data)
   return ret.stdout
 
-def yarpgen(uuid: str, cc: str) -> bytes:
-  yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split(), stdout=PIPE, stderr=PIPE)
-  preprocessed = run(f'{cc} -E {TMP}/yarpgen_{uuid}/func.c'.split(), stdout=PIPE, stderr=PIPE)
-  return preprocessed.stdout
-
-
-def compile(code: bytes, cc: str, strip: str):
-  unopt_obj = f'{TMP}/{randstring(32)}.o'
-  opt_obj = f'{TMP}/{randstring(32)}.o'
-
-  unopt = Popen(f'{cc} -o {unopt_obj} -O0 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), stdin=PIPE, stdout=PIPE,stderr=PIPE)
-  opt = Popen(f'{cc} -o {opt_obj} -O3 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-  unopt.communicate(code)
-  opt.communicate(code)
-  unopt = Popen(f'{strip} {unopt_obj}'.split())
-  opt = Popen(f'{strip} {opt_obj}'.split())
-  unopt.communicate()
-  opt.communicate()
-
-  # uncomment these lines to create training data for zstd dictionary
-  #shutil.copyfile(unopt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
-  #shutil.copyfile(opt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
-
-  unopt_data = open(unopt_obj, 'rb').read()
-  opt_data = open(opt_obj, 'rb').read()
-
-  os.remove(unopt_obj)
-  os.remove(opt_obj)
-
-  return unopt_data, opt_data
-
-
-def disasm(o_file: str, objdump: str):
-  _ = Popen(f'{objdump} -M no-aliases -d {o_file}'.split(), stdout=PIPE)
-  out, err = _.communicate()
-  return out.decode('utf-8')
-
 
 def cycle(device, training_data, db_idx, batch_size):
   if len(training_data) < batch_size:
@@ -183,9 +146,7 @@ def cycle(device, training_data, db_idx, batch_size):
       for entry in reader:
         unopt = tokenize_sp(ast.literal_eval(entry['unopt']))
         opt = tokenize_sp(ast.literal_eval(entry['opt']))
-        if len(unopt) >= ENC_SEQ_LEN:
-          continue
-        if len(opt) >= DEC_SEQ_LEN:
+        if len(unopt) >= ENC_SEQ_LEN or len(opt) >= DEC_SEQ_LEN:
           continue
         opt.insert(0,tkn_sp('DECSTART'))
         mask = [True]*len(unopt)
@@ -213,11 +174,11 @@ def gen(uuid):
       if uuid == 0 and x % 10 == 0:
           print(x)
 
-      yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split())
-      unopt = run(f'{CC} -o /{TMP}/yarpgen_{uuid}/func.c.unopt.o -O0 -Wall -fcf-protection=none -march=znver3 -xc -c /{TMP}/yarpgen_{uuid}/func.c'.split())
-      opt = run(f'{CC} -o /{TMP}/yarpgen_{uuid}/func.c.opt.o -O3 -Wall -fcf-protection=none -march=znver3 -xc -c /{TMP}/yarpgen_{uuid}/func.c'.split())
-      unopt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.unopt.o'.split())
-      opt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.opt.o'.split())
+      yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      unopt = run(f'{CC} -o /{TMP}/yarpgen_{uuid}/func.c.unopt.o -O0 -Wall -fcf-protection=none -march=znver3 -xc -c /{TMP}/yarpgen_{uuid}/func.c'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt = run(f'{CC} -o /{TMP}/yarpgen_{uuid}/func.c.opt.o -O3 -Wall -fcf-protection=none -march=znver3 -xc -c /{TMP}/yarpgen_{uuid}/func.c'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      unopt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.unopt.o'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.opt.o'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
       # uncomment these lines to create training data for zstd dictionary
       # shutil.copyfile(unopt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
@@ -232,10 +193,10 @@ def gen(uuid):
       if h := hash(unopt) in ALL_INPUTS:
         continue
       ALL_INPUTS.add(h)
-      writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
+      writer.writerow({'c': prog, 'unopt': zstd_compress(unopt,DICTIONARY), 'opt': zstd_compress(opt, DICTIONARY)})
 
 def generate_database():
-  ncpu = multiprocessing.cpu_count()*8
+  ncpu = multiprocessing.cpu_count()*2
   os.makedirs(f'{TMP}/data', exist_ok=True)
   os.makedirs(f'{TMP}/all_yarpgen', exist_ok=True)
   for uuid in range(ncpu):
@@ -483,6 +444,6 @@ def main():
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
-  generate_database()
-  #main()
+  #generate_database()
+  main()
   #sentencepiece_train()
