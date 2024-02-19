@@ -202,6 +202,7 @@ def clean_database():
   print("cleaning database")
   ALL_INPUTS = set()
   for i, gz in enumerate(os.listdir(f'/{ROOTDIR}/rawdata/')):
+    print(f"cleaning {i}")
     with (gzip.open(f'/{ROOTDIR}/rawdata/{gz}', 'rt') as inf,
           gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf):
       out = list()
