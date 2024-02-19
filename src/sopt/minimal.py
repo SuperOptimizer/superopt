@@ -49,7 +49,7 @@ elif platform.system() == 'Darwin':
 GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
-NUM_TOKENS = 258
+NUM_TOKENS = 8194
 ENC_SEQ_LEN = 512
 DEC_SEQ_LEN = 512
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
@@ -87,12 +87,12 @@ def randstring(n):
   return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(n))
 
 
-def tkn(t):
-  if isinstance(t, str):
-    if t == 'PAD': return 256
-    elif t == 'DECSTART': return 257
-  elif isinstance(t, bytes):
-    return list(t)
+def tkn_sp(t):
+  if t == 'DECSTART':
+    return 8192
+  elif t == 'PAD':
+    return 8193
+  assert False
 
 def sentencepiece_train():
   with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
@@ -100,24 +100,37 @@ def sentencepiece_train():
       with gzip.open(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz', 'rt') as f:
         reader = csv.DictReader(f)
         for entry in reader:
-          unopt = detokenize(ast.literal_eval(entry['unopt']),f'{ROOTDIR}/misc/zstd_x86_dictionary')
-          opt = detokenize(ast.literal_eval(entry['opt']),f'{ROOTDIR}/misc/zstd_x86_dictionary')
+          unopt = ast.literal_eval(entry['unopt'])
+          opt = ast.literal_eval(entry['opt'])
           outf.write(base64.b64encode(unopt).decode('utf-8') + '\n')
           outf.write(base64.b64encode(opt).decode('utf-8') + '\n')
-          ret = tokenize_sp(base64.b64encode(unopt).decode('utf-8'))
           print()
 
-def tokenize_sp(data: str):
-  sp = spm.SentencePieceProcessor()
-  sp.load(f'{ROOTDIR}/misc/x86sopt.model')
-  tokens = sp.encode(data)
+sp = None
+
+def tokenize_sp(data: bytes):
+  global sp
+  if sp is None:
+    sp = spm.SentencePieceProcessor()
+    sp.load(f'{ROOTDIR}/misc/x86sopt.model')
+  tokens = sp.encode(base64.b64encode(data).decode('utf-8'))
   return tokens
 
-def tokenize(data: bytes, dictionary: str) -> bytes:
+
+def detokenize_sp(tokens: [int]):
+  global sp
+  if sp is None:
+    sp = spm.SentencePieceProcessor()
+    sp.load(f'{ROOTDIR}/misc/x86sopt.model')
+  tokens = [t for t in tokens if t < NUM_TOKENS-2]
+  tokens = sp.decode(tokens)
+  return tokens
+
+def zstd_compress(data: bytes, dictionary: str) -> bytes:
   ret = run(f"zstd -D {dictionary} --ultra -22 -c -".split(), input=data,  stdout=PIPE, stderr=PIPE)
   return ret.stdout
 
-def detokenize(data: [int], dictionary: str) -> bytes:
+def zstd_decompress(data: [int], dictionary: str) -> bytes:
   data = [x for x in data if 0 <= x <= 255]
   ret = run(f"zstd -D {dictionary} --ultra -22 -d -c -".split(), input=bytes(data),  stdout=PIPE, stderr=PIPE)
   if len(ret.stderr) > 0:
@@ -134,15 +147,18 @@ def compile(code: bytes, cc: str, strip: str):
   unopt_obj = f'{TMP}/{randstring(32)}.o'
   opt_obj = f'{TMP}/{randstring(32)}.o'
 
-  unopt = run(f'{cc} -o {unopt_obj} -O0 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), input=code, stdout=PIPE,stderr=PIPE)
-  opt = run(f'{cc} -o {opt_obj} -O3 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), input=code, stdout=PIPE, stderr=PIPE)
-
-  unopt = run(f'{strip} {unopt_obj}'.split())
-  opt = run(f'{strip} {opt_obj}'.split())
+  unopt = Popen(f'{cc} -o {unopt_obj} -O0 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), stdin=PIPE, stdout=PIPE,stderr=PIPE)
+  opt = Popen(f'{cc} -o {opt_obj} -O3 -Wall -fcf-protection=none -march=znver3 -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+  unopt.communicate(code)
+  opt.communicate(code)
+  unopt = Popen(f'{strip} {unopt_obj}'.split())
+  opt = Popen(f'{strip} {opt_obj}'.split())
+  unopt.communicate()
+  opt.communicate()
 
   # uncomment these lines to create training data for zstd dictionary
-  shutil.copyfile(unopt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
-  shutil.copyfile(opt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
+  #shutil.copyfile(unopt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
+  #shutil.copyfile(opt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
 
   unopt_data = open(unopt_obj, 'rb').read()
   opt_data = open(opt_obj, 'rb').read()
@@ -159,23 +175,23 @@ def disasm(o_file: str, objdump: str):
   return out.decode('utf-8')
 
 
-def cycle(device, training_data, db_idx, batch_size, encoder_len, decoder_len):
+def cycle(device, training_data, db_idx, batch_size):
   if len(training_data) < batch_size:
     print("db_idx", db_idx)
     with gzip.open(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz','rt') as f:
       reader = csv.DictReader(f)
       for entry in reader:
-        unopt = list(ast.literal_eval(entry['unopt']))
-        opt = list(ast.literal_eval(entry['opt']))
+        unopt = tokenize_sp(ast.literal_eval(entry['unopt']))
+        opt = tokenize_sp(ast.literal_eval(entry['opt']))
         if len(unopt) >= ENC_SEQ_LEN:
           continue
         if len(opt) >= DEC_SEQ_LEN:
           continue
-        opt.insert(0,tkn('DECSTART'))
+        opt.insert(0,tkn_sp('DECSTART'))
         mask = [True]*len(unopt)
-        mask.extend([False]*(encoder_len-len(unopt)))
-        unopt.extend([tkn('PAD')] * (encoder_len - len(unopt)))
-        opt.extend([tkn('PAD')] * (decoder_len - len(opt)))
+        mask.extend([False]*(ENC_SEQ_LEN-len(unopt)))
+        unopt.extend([tkn_sp('PAD')] * (ENC_SEQ_LEN - len(unopt)))
+        opt.extend([tkn_sp('PAD')] * (DEC_SEQ_LEN - len(opt)))
         training_data.append([unopt, opt, mask])
       db_idx += 1
       if not os.path.exists(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz'):
@@ -196,17 +212,30 @@ def gen(uuid):
     for x in range(100):
       if uuid == 0 and x % 10 == 0:
           print(x)
-      prog = yarpgen(uuid, CC)
-      unopt, opt = compile(prog, CC, STRIP)
-      unopt = tokenize(unopt, f'{ROOTDIR}/misc/zstd_x86_dictionary')
-      opt = tokenize(opt, f'{ROOTDIR}/misc/zstd_x86_dictionary')
+
+      yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split())
+      unopt = run(f'{CC} -o /{TMP}/yarpgen_{uuid}/func.c.unopt.o -O0 -Wall -fcf-protection=none -march=znver3 -xc -c /{TMP}/yarpgen_{uuid}/func.c'.split())
+      opt = run(f'{CC} -o /{TMP}/yarpgen_{uuid}/func.c.opt.o -O3 -Wall -fcf-protection=none -march=znver3 -xc -c /{TMP}/yarpgen_{uuid}/func.c'.split())
+      unopt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.unopt.o'.split())
+      opt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.opt.o'.split())
+
+      # uncomment these lines to create training data for zstd dictionary
+      # shutil.copyfile(unopt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
+      # shutil.copyfile(opt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
+      with  open(f'/{TMP}/yarpgen_{uuid}/func.c') as f:
+        prog = f.read()
+      with open(f'/{TMP}/yarpgen_{uuid}/func.c.unopt.o', 'rb') as f:
+        unopt = f.read()
+      with open(f'/{TMP}/yarpgen_{uuid}/func.c.opt.o', 'rb') as f:
+        opt = f.read()
+
       if h := hash(unopt) in ALL_INPUTS:
         continue
       ALL_INPUTS.add(h)
       writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
 
 def generate_database():
-  ncpu = multiprocessing.cpu_count()
+  ncpu = multiprocessing.cpu_count()*8
   os.makedirs(f'{TMP}/data', exist_ok=True)
   os.makedirs(f'{TMP}/all_yarpgen', exist_ok=True)
   for uuid in range(ncpu):
@@ -351,7 +380,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
   params = sum([np.prod(p.size()) for p in model_parameters])
   print(f"num params {params // 1024 // 1024}M {params // 1024}K ")
 
-  return model, dtype, ENC_SEQ_LEN, DEC_SEQ_LEN, batch_size, generate_every
+  return model, dtype, batch_size, generate_every
 
 
 @timeit
@@ -363,7 +392,7 @@ def train(rank, world_size, device):
     torch.distributed.init_process_group(backend='nccl', rank=rank,world_size=world_size)
     torch.cuda.set_device(rank)
 
-  model, dtype, encoder_len, decoder_len, batch_size, generate_every = get_model(device, tkn('PAD'), NUM_TOKENS,rank,world_size)
+  model, dtype, batch_size, generate_every = get_model(device, tkn_sp('PAD'), NUM_TOKENS,rank,world_size)
 
   optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
   if device == 'cuda':
@@ -387,7 +416,7 @@ def train(rank, world_size, device):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt, training_data, db_idx = cycle(device, training_data, db_idx, batch_size, encoder_len, decoder_len)
+    src, src_mask, tgt, training_data, db_idx = cycle(device, training_data, db_idx, batch_size)
     if device == 'cuda':
       with torch.cuda.amp.autocast(dtype=dtype):
         loss = model(src, tgt, mask=src_mask)
@@ -417,19 +446,19 @@ def train(rank, world_size, device):
             f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt')
     if i % GENERATE_EVERY == 0:
       model.eval()
-      src, src_mask, tgt, training_data, db_idx = cycle(device, training_data, db_idx, batch_size, encoder_len, decoder_len)
+      src, src_mask, tgt, training_data, db_idx = cycle(device, training_data, db_idx, batch_size)
       src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
-      start_tokens = torch.tensor([tkn('DECSTART')]).to(device)
-      sample = model.generate(src, start_tokens, decoder_len, mask = src_mask)
+      start_tokens = torch.tensor([tkn_sp('DECSTART')]).to(device)
+      sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
       #the target output always includes the 'DECSTART' token whereas the sampled output does not
       #so shift the output left one token to delete it
-      for x in range(decoder_len-1):
+      for x in range(DEC_SEQ_LEN-1):
         tgt[0,x] = tgt[0,x+1]
       incorrects = (tgt != sample).sum()
       print_stmt = f'\nRANK: {rank} start\n'
-      print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0],DICTIONARY)} \n"
-      print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist(),DICTIONARY)}\n"
-      print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0],DICTIONARY)}\n"
+      print_stmt += f"\ninput tokenized:  \n{detokenize_sp(src.tolist()[0])} \n"
+      print_stmt += f"\npredicted detokenized:  \n{detokenize_sp(sample.tolist())}\n"
+      print_stmt += f"\nactual detokenized:     \n{detokenize_sp(tgt.tolist()[0])}\n"
       print_stmt += f"\nincorrects: {incorrects}\n"
       print_stmt += f'\nRANK: {rank} end\n'
       print(print_stmt)
@@ -454,6 +483,6 @@ def main():
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
-  #generate_database()
+  generate_database()
   #main()
-  sentencepiece_train()
+  #sentencepiece_train()
