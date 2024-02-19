@@ -457,13 +457,14 @@ def main():
 
 if __name__ == '__main__':
   if len(sys.argv) != 2:
-    print("you must specify a trask: train, infer, gen, or sentencepiece")
+    print("you must specify a trask: train, infer, gen, clean, or sentencepiece")
     print("defaulting to train")
-    sys.argv.append("train")
+    sys.argv.append("gen")
   if sys.argv[1] == 'train':
     main()
   elif sys.argv[1] == 'gen':
     generate_database()
+  elif sys.argv[1] == 'clean':
     clean_database()
   elif sys.argv[1] == 'infer':
     pass
