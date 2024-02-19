@@ -97,7 +97,7 @@ def tkn_sp(t):
 
 def sentencepiece_train():
   with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
-    for db_idx in range(10):
+    for db_idx in range(len(os.listdir(f'/{ROOTDIR}/cleandata/'))):
       with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz', 'rt') as f:
         reader = csv.DictReader(f)
         for entry in reader:
