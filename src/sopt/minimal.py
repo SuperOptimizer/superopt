@@ -253,7 +253,7 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
     elif ('4090' in torch.cuda.get_device_name() or
           'A5000' in torch.cuda.get_device_name() or
           '3090' in torch.cuda.get_device_name()):
-      dim = 1024
+      dim = 2048
       batch_size = 32
       generate_every = 1000
       enc_depth = 10
@@ -365,7 +365,7 @@ def train(rank, world_size, device):
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
 
   training_data = []
-  db_idx = 0
+  db_idx = rank
 
   iterations = 0
   if device == 'cuda' and os.path.exists(f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt'):
@@ -445,6 +445,7 @@ def main():
   if world_size <= 1:
     train(0,1,device)
   else:
+    print(f"spawning {world_size} gpu threads")
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
