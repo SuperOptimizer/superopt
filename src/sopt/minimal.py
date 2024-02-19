@@ -202,20 +202,24 @@ def clean_database():
   print("cleaning database")
   ALL_INPUTS = set()
   for i, gz in enumerate(os.listdir(f'/{ROOTDIR}/rawdata/')):
-    print(f"cleaning {i}")
-    with (gzip.open(f'/{ROOTDIR}/rawdata/{gz}', 'rt') as inf,
-          gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf):
-      out = list()
-      reader = csv.DictReader(inf)
-      for row in reader:
-        if h := hash(row['unopt']) in ALL_INPUTS:
-          continue
-        else:
-          ALL_INPUTS.add(h)
-          out.append(row)
-      writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
-      writer.writeheader()
-      writer.writerows(out)
+    try:
+      print(f"cleaning {i}")
+      with (gzip.open(f'/{ROOTDIR}/rawdata/{gz}', 'rt') as inf,
+            gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf):
+        out = list()
+        reader = csv.DictReader(inf)
+        for row in reader:
+          if h := hash(row['unopt']) in ALL_INPUTS:
+            continue
+          else:
+            ALL_INPUTS.add(h)
+            out.append(row)
+        writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
+        writer.writeheader()
+        writer.writerows(out)
+    except:
+      #if we ctrl-z during generation then gz files might be corrupt so just skip
+      pass
 
 
 def generate_database():
