@@ -171,7 +171,8 @@ def cycle(device, training_data, db_idx, batch_size):
 
 def gen(uuid):
   ALL_INPUTS = set()
-  with gzip.open(f'/{ROOTDIR}/rawdata/db_{randstring(16)}.csv.gz','w+t') as f:
+  outpath = f'/{ROOTDIR}/rawdata/db_{randstring(16)}.csv.gz'
+  with gzip.open(outpath,'w+t') as f:
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
     for x in range(1000):
@@ -195,31 +196,29 @@ def gen(uuid):
         continue
       ALL_INPUTS.add(h)
       if len(unopt) > 4096 or len(opt) > 4096:
+        print("skipping too long prog")
         continue
       writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
+  return outpath
 
-def clean_database():
+def clean_database(files):
   print("cleaning database")
   ALL_INPUTS = set()
-  for i, gz in enumerate(os.listdir(f'/{ROOTDIR}/rawdata/')):
-    try:
-      print(f"cleaning {i}")
-      with (gzip.open(f'/{ROOTDIR}/rawdata/{gz}', 'rt') as inf,
-            gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf):
-        out = list()
-        reader = csv.DictReader(inf)
-        for row in reader:
-          if h := hash(row['unopt']) in ALL_INPUTS:
-            continue
-          else:
-            ALL_INPUTS.add(h)
-            out.append(row)
-        writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
-        writer.writeheader()
-        writer.writerows(out)
-    except:
-      #if we ctrl-z during generation then gz files might be corrupt so just skip
-      pass
+  i = len(os.listdir(f'/{ROOTDIR}/cleandata'))
+  for gz in files:
+    print(f"cleaning {gz}")
+    out = list()
+    with gzip.open(gz, 'rt') as inf:
+      reader = csv.DictReader(inf)
+      for row in reader:
+        if h := hash(row['unopt']) not in ALL_INPUTS:
+          ALL_INPUTS.add(h)
+          out.append(row)
+    with gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf:
+      writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
+      writer.writeheader()
+      writer.writerows(out)
+      i+=1
 
 
 def generate_database():
@@ -232,13 +231,12 @@ def generate_database():
   for uuid in range(ncpu):
     os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
   print(f"spawning {ncpu} threads")
-  ALL_INPUTS = set()
-  for x in range(1):
+  for x in range(100):
     print('processed', x)
-
     with multiprocessing.Pool(ncpu) as p:
-      p.map(gen, list(range(ncpu)))
-    #gen(0)
+      ret = p.map(gen, list(range(ncpu)))
+    #ret = gen(0)
+    clean_database(ret)
 
 
 def get_model(device, pad_value, num_tokens, rank, world_size):
@@ -468,8 +466,6 @@ if __name__ == '__main__':
     main()
   elif sys.argv[1] == 'gen':
     generate_database()
-  elif sys.argv[1] == 'clean':
-    clean_database()
   elif sys.argv[1] == 'infer':
     pass
   elif sys.argv[1] == 'sentencepiece':
