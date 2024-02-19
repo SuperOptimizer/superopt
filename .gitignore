@@ -1,5 +1,10 @@
 #no checkpoint files
 *.pt
+#no data dir
+data/
+rawdata/
+cleandata/
+
 # Prerequisites
 *.d
 
