@@ -98,7 +98,7 @@ def tkn_sp(t):
 def sentencepiece_train():
   with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
     for db_idx in range(10):
-      with gzip.open(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz', 'rt') as f:
+      with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz', 'rt') as f:
         reader = csv.DictReader(f)
         for entry in reader:
           unopt = ast.literal_eval(entry['unopt'])
@@ -461,7 +461,7 @@ if __name__ == '__main__':
   if len(sys.argv) != 2:
     print("you must specify a trask: train, infer, gen, clean, or sentencepiece")
     print("defaulting to train")
-    sys.argv.append("gen")
+    sys.argv.append("sentencepiece")
   if sys.argv[1] == 'train':
     main()
   elif sys.argv[1] == 'gen':
