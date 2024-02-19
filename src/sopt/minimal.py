@@ -50,8 +50,8 @@ GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 NUM_TOKENS = 8194
-ENC_SEQ_LEN = 512
-DEC_SEQ_LEN = 512
+ENC_SEQ_LEN = 1024
+DEC_SEQ_LEN = 1024
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 TMP = '/tmp/sopt'
 DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
@@ -145,7 +145,7 @@ def zstd_decompress(data: [int], dictionary: str) -> bytes:
 def cycle(device, training_data, db_idx, batch_size):
   if len(training_data) < batch_size:
     print("db_idx", db_idx)
-    with gzip.open(f'/{ROOTDIR}/data/processed_{db_idx}.csv.gz','rt') as f:
+    with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz','rt') as f:
       reader = csv.DictReader(f)
       for entry in reader:
         unopt = tokenize_sp(ast.literal_eval(entry['unopt']))
@@ -169,12 +169,12 @@ def cycle(device, training_data, db_idx, batch_size):
   return mysrc, mysrc_mask, mytgt, training_data, db_idx
 
 
-ALL_INPUTS = set()
 def gen(uuid):
-  with open(f'/{TMP}/data/db_{uuid}.csv.gz','w+t') as f:
+  ALL_INPUTS = set()
+  with gzip.open(f'/{ROOTDIR}/rawdata/db_{randstring(16)}.csv.gz','w+t') as f:
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
-    for x in range(100):
+    for x in range(1000):
       if uuid == 0 and x % 10 == 0:
           print(x)
 
@@ -184,9 +184,6 @@ def gen(uuid):
       unopt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.unopt.o'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
       opt = run(f'{STRIP} /{TMP}/yarpgen_{uuid}/func.c.opt.o'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
-      # uncomment these lines to create training data for zstd dictionary
-      # shutil.copyfile(unopt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
-      # shutil.copyfile(opt_obj, f'/tmp/sopt/all_yarpgen/{randstring(32)}.o')
       with  open(f'/{TMP}/yarpgen_{uuid}/func.c') as f:
         prog = f.read()
       with open(f'/{TMP}/yarpgen_{uuid}/func.c.unopt.o', 'rb') as f:
@@ -201,35 +198,42 @@ def gen(uuid):
         continue
       writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
 
+def clean_database():
+  print("cleaning database")
+  ALL_INPUTS = set()
+  for i, gz in enumerate(os.listdir(f'/{ROOTDIR}/rawdata/')):
+    with (gzip.open(f'/{ROOTDIR}/rawdata/{gz}', 'rt') as inf,
+          gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf):
+      out = list()
+      reader = csv.DictReader(inf)
+      for row in reader:
+        if h := hash(row['unopt']) in ALL_INPUTS:
+          continue
+        else:
+          ALL_INPUTS.add(h)
+          out.append(row)
+      writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
+      writer.writeheader()
+      writer.writerows(out)
+
+
 def generate_database():
-  ncpu = multiprocessing.cpu_count()*2
+  print("generating database")
+  ncpu = multiprocessing.cpu_count()
   os.makedirs(f'{TMP}/data', exist_ok=True)
   os.makedirs(f'{TMP}/all_yarpgen', exist_ok=True)
+  os.makedirs(f'{ROOTDIR}/rawdata', exist_ok=True)
+  os.makedirs(f'{ROOTDIR}/cleandata', exist_ok=True)
   for uuid in range(ncpu):
     os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
   print(f"spawning {ncpu} threads")
   ALL_INPUTS = set()
-  for x in range(100):
+  for x in range(1):
     print('processed', x)
 
     with multiprocessing.Pool(ncpu) as p:
       p.map(gen, list(range(ncpu)))
     #gen(0)
-    OUT = list()
-    for i, gz in enumerate(os.listdir(f'/{TMP}/data/')):
-      with open(f'/{TMP}/data/{gz}', 'rt') as inf:
-        reader = csv.DictReader(inf)
-        for row in reader:
-          if h := hash(row['unopt']) in ALL_INPUTS:
-            continue
-          else:
-            ALL_INPUTS.add(h)
-            OUT.append(row)
-    num = len(os.listdir(f'/{ROOTDIR}/data/'))
-    with gzip.open(f'/{ROOTDIR}/data/processed_{num}.csv.gz', 'w+t') as outf:
-      writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
-      writer.writeheader()
-      writer.writerows(OUT)
 
 
 def get_model(device, pad_value, num_tokens, rank, world_size):
@@ -423,9 +427,9 @@ def train(rank, world_size, device):
         tgt[0,x] = tgt[0,x+1]
       incorrects = (tgt != sample).sum()
       print_stmt = f'\nRANK: {rank} start\n'
-      print_stmt += f"\ninput tokenized:  \n{zstd_decompress(detokenize_sp(src.tolist()[0]),DICTIONARY)} \n"
-      print_stmt += f"\npredicted detokenized:  \n{zstd_decompress(detokenize_sp(sample.tolist()),DICTIONARY)}\n"
-      print_stmt += f"\nactual detokenized:     \n{zstd_decompress(detokenize_sp(tgt.tolist()[0]),DICTIONARY)}\n"
+      print_stmt += f"\ninput tokenized:  \n{detokenize_sp(src.tolist()[0])} \n"
+      print_stmt += f"\npredicted detokenized:  \n{detokenize_sp(sample.tolist())}\n"
+      print_stmt += f"\nactual detokenized:     \n{detokenize_sp(tgt.tolist()[0])}\n"
       print_stmt += f"\nincorrects: {incorrects}\n"
       print_stmt += f'\nRANK: {rank} end\n'
       print(print_stmt)
@@ -451,6 +455,7 @@ def main():
     torch.multiprocessing.spawn(train, args=(world_size,device), nprocs=world_size,join=True)
 
 if __name__ == '__main__':
-  generate_database()
-  #main()
+  #generate_database()
+  #clean_database()
+  main()
   #sentencepiece_train()
