@@ -95,16 +95,29 @@ def tkn_sp(t):
     return 8193
   assert False
 
+def zstd_train():
+  os.makedirs(f'/{TMP}/all_objs', exist_ok=True)
+  for db_idx in range(len(os.listdir(f'/{ROOTDIR}/cleandata/')))[:25]:
+    with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz', 'rt') as f:
+      reader = csv.DictReader(f)
+      for entry in reader:
+        unopt = ast.literal_eval(entry['unopt'])
+        opt = ast.literal_eval(entry['opt'])
+        with open(f'/{TMP}/all_objs/{randstring(16)}.o','w+b') as outf:
+          outf.write(unopt)
+        with open(f'/{TMP}/all_objs/{randstring(16)}.o','w+b') as outf:
+          outf.write(opt)
+
 def sentencepiece_train():
-  with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
+  with open(f'{TMP}/sentencepiece.txt', 'w+b') as outf:
     for db_idx in range(len(os.listdir(f'/{ROOTDIR}/cleandata/'))):
       with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz', 'rt') as f:
         reader = csv.DictReader(f)
         for entry in reader:
           unopt = ast.literal_eval(entry['unopt'])
           opt = ast.literal_eval(entry['opt'])
-          outf.write(base64.b64encode(unopt).decode('utf-8') + '\n')
-          outf.write(base64.b64encode(opt).decode('utf-8') + '\n')
+          outf.write(unopt)
+          outf.write(opt)
 
 sp = None
 
@@ -169,13 +182,13 @@ def cycle(device, training_data, db_idx, batch_size):
   return mysrc, mysrc_mask, mytgt, training_data, db_idx
 
 
-def gen(uuid):
-  ALL_INPUTS = set()
+def gen(args):
+  uuid, all_inputs = args
   outpath = f'/{ROOTDIR}/rawdata/db_{randstring(16)}.csv.gz'
   with gzip.open(outpath,'w+t') as f:
     writer = csv.DictWriter(f,['c','unopt','opt'])
     writer.writeheader()
-    for x in range(1000):
+    for x in range(100):
       if uuid == 0 and x % 10 == 0:
           print(x)
 
@@ -192,18 +205,17 @@ def gen(uuid):
       with open(f'/{TMP}/yarpgen_{uuid}/func.c.opt.o', 'rb') as f:
         opt = f.read()
 
-      if h := hash(unopt) in ALL_INPUTS:
+      if h := hash(unopt) in all_inputs:
         continue
-      ALL_INPUTS.add(h)
+      all_inputs.add(h)
       if len(unopt) > 16384 or len(opt) > 16384:
         print("skipping too long prog")
         continue
       writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
   return outpath
 
-def clean_database(files):
+def clean_database(files, all_inputs):
   print("cleaning database")
-  ALL_INPUTS = set()
   i = len(os.listdir(f'/{ROOTDIR}/cleandata'))
   for gz in files:
     print(f"cleaning {gz}")
@@ -211,17 +223,19 @@ def clean_database(files):
     with gzip.open(gz, 'rt') as inf:
       reader = csv.DictReader(inf)
       for row in reader:
-        if h := hash(row['unopt']) not in ALL_INPUTS:
-          ALL_INPUTS.add(h)
+        if h := hash(row['unopt']) not in all_inputs:
+          all_inputs.add(h)
           out.append(row)
     with gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf:
       writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
       writer.writeheader()
       writer.writerows(out)
       i+=1
+  return all_inputs
 
 
 def generate_database():
+  ALL_INPUTS = set()
   print("generating database")
   ncpu = multiprocessing.cpu_count()
   os.makedirs(f'{TMP}/data', exist_ok=True)
@@ -234,9 +248,12 @@ def generate_database():
   for x in range(100):
     print('processed', x)
     with multiprocessing.Pool(ncpu) as p:
-      ret = p.map(gen, list(range(ncpu)))
+      args = []
+      for x in range(ncpu):
+        args.append((x,ALL_INPUTS))
+      ret = p.map(gen, args)
     #ret = gen(0)
-    clean_database(ret)
+    ALL_INPUTS = clean_database(ret, ALL_INPUTS)
 
 
 def get_model(device, pad_value, num_tokens, rank, world_size):
@@ -459,9 +476,9 @@ def main():
 
 if __name__ == '__main__':
   if len(sys.argv) != 2:
-    print("you must specify a trask: train, infer, gen, clean, or sentencepiece")
+    print("you must specify a trask: train, infer, gen, clean, zstd, sentencepiece")
     print("defaulting to train")
-    sys.argv.append("sentencepiece")
+    sys.argv.append("gen")
   if sys.argv[1] == 'train':
     main()
   elif sys.argv[1] == 'gen':
@@ -470,3 +487,5 @@ if __name__ == '__main__':
     pass
   elif sys.argv[1] == 'sentencepiece':
     sentencepiece_train()
+  elif sys.argv[1] == 'zstd':
+    zstd_train()
