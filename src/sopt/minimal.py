@@ -195,7 +195,7 @@ def gen(uuid):
       if h := hash(unopt) in ALL_INPUTS:
         continue
       ALL_INPUTS.add(h)
-      if len(unopt) > 4096 or len(opt) > 4096:
+      if len(unopt) > 16384 or len(opt) > 16384:
         print("skipping too long prog")
         continue
       writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
