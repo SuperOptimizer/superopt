@@ -86,20 +86,21 @@ def train(rank):
     if i == 0 and DEVICE == 'cuda':
       report_cuda_size()
     if i % GENERATE_EVERY == 0:
-      if i > 0:
-        save_checkpoint(model,  optim, loss, scaler, scheduler)
-      model.eval()
-      src, src_mask, tgt, training_data, db_idx = next(cycle(batch_size, training_data, db_idx))
-      src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
-      start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
-      sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
+      with FSDP.summon_full_params(model, writeback=False, recurse=False):
+        if i > 0:
+          save_checkpoint(model,  optim, loss, scaler, scheduler)
+        model.eval()
+        src, src_mask, tgt, training_data, db_idx = next(cycle(batch_size, training_data, db_idx))
+        src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
+        start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
+        sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
 
-      print_stmt = f'\nRANK: {rank} start\n'
-      print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0])} \n"
-      print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist())}\n"
-      print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0])}\n"
-      print_stmt += f'\nRANK: {rank} end\n'
-      print(print_stmt)
+        print_stmt = f'\nRANK: {rank} start\n'
+        print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0])} \n"
+        print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist())}\n"
+        print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0])}\n"
+        print_stmt += f'\nRANK: {rank} end\n'
+        print(print_stmt)
 
   if WORLD_SIZE > 1:
     torch.distributed.destroy_process_group()

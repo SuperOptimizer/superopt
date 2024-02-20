@@ -146,7 +146,6 @@ def get_model(rank, pad_value):
   elif RAM_SIZE <= 80:
     batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
 
-
   return model, batch_size
 
 def tkn_sp(t):
@@ -347,15 +346,14 @@ def generate_database():
     ALL_INPUTS = clean_database(ret, ALL_INPUTS)
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
-  with FSDP.summon_full_params(model, writeback=False, recurse=False):
-    if DEVICE == 'cuda':
-      torch.save({
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optim.state_dict(),
-        'loss': loss.item(),
-        'scaler': scaler.state_dict(),
-        'scheduler': scheduler.state_dict()},
-        CHECKPOINT)
+  if DEVICE == 'cuda':
+    torch.save({
+      'model_state_dict': model.state_dict(),
+      'optimizer_state_dict': optim.state_dict(),
+      'loss': loss.item(),
+      'scaler': scaler.state_dict(),
+      'scheduler': scheduler.state_dict()},
+      CHECKPOINT)
 
 def load_checkpoint(model, optim, loss):
   if os.path.exists(CHECKPOINT):
