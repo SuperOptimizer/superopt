@@ -15,10 +15,14 @@ from impl import (
 from util import report_cuda_size, timeit, report_model_size
 
 
-def cycle(batch_size, training_data, db_idx):
+def cycle(batch_size, training_data, csvs):
   if len(training_data) < batch_size:
-    print(f"loading /{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz")
-    with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz','rt') as f:
+    csvgz = random.choice(csvs)
+    csvs.remove(csvgz)
+    if len(csvs) == 0:
+      csvs = os.listdir(f'/{ROOTDIR}/cleandata/')
+    print(f"loading /{ROOTDIR}/cleandata/{csvgz}")
+    with gzip.open(f'/{ROOTDIR}/cleandata/{csvgz}','rt') as f:
       reader = csv.DictReader(f)
       for entry in reader:
         unopt = ast.literal_eval(entry['unopt'])
@@ -33,16 +37,13 @@ def cycle(batch_size, training_data, db_idx):
         unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
         opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
         training_data.append([unopt_tokens, opt_tokens, mask])
-    db_idx += 1
-    if not os.path.exists(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz'):
-      db_idx = 0
   while len(training_data) > batch_size:
     batch = training_data[:batch_size]
     training_data = training_data[batch_size:]
     mysrc = torch.tensor(list(x[0] for x in batch)).long().to(DEVICE)
     mytgt = torch.tensor(list(x[1] for x in batch)).long().to(DEVICE)
     mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
-    yield mysrc, mysrc_mask, mytgt, training_data, db_idx
+    yield mysrc, mysrc_mask, mytgt, training_data, csvs
 
 
 @timeit
@@ -62,14 +63,14 @@ def train(rank):
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
   model, optim, loss = load_checkpoint(model, optim, 0)
 
-  db_idx = 0
   training_data = []
+  csvs = os.listdir(f'/{ROOTDIR}/cleandata/')
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt, training_data, db_idx = next(cycle(batch_size, training_data, db_idx))
+    src, src_mask, tgt, training_data, csvs = next(cycle(batch_size, training_data, csvs))
     if DEVICE == 'cuda':
       with torch.cuda.amp.autocast(dtype=DTYPE):
         loss = model(src, tgt, mask=src_mask)
@@ -90,7 +91,7 @@ def train(rank):
         if i > 0:
           save_checkpoint(model,  optim, loss, scaler, scheduler)
         model.eval()
-        src, src_mask, tgt, training_data, db_idx = next(cycle(batch_size, training_data, db_idx))
+        src, src_mask, tgt, training_data, csvs = next(cycle(batch_size, training_data, csvs))
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
         start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
