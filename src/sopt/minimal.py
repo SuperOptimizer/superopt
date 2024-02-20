@@ -396,7 +396,6 @@ def get_model(device, pad_value, num_tokens, rank, world_size):
     enc_use_abs_pos_emb=False,
     enc_attn_on_attn=True,
     enc_macaron=True,
-    enc_gate_residual=True,
     enc_resi_dual=True,
     enc_resi_dual_scale=0.1,
 
