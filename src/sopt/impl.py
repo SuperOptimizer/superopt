@@ -22,21 +22,21 @@ import tqdm
 from util import randstring
 
 ARCH = 'x86'
+MODEL_SIZE = "small"
 
 if torch.cuda.is_available():
   DEVICE = 'cuda'
   WORLD_SIZE = torch.cuda.device_count()
 else:
-  DEVICE = 'cpu'
+  if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    DEVICE = 'mps'
+  else:
+    DEVICE = 'cpu'
   WORLD_SIZE = 1
 
-
-
-DTYPE = torch.float16 if '2060' in torch.cuda.get_device_name() else torch.bfloat16
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 TMP = '/tmp/sopt'
 DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
-CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt'
 GENERATE_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
@@ -45,7 +45,12 @@ ENC_SEQ_LEN = 2048
 DEC_SEQ_LEN = 2048
 BATCH_SIZE = 8
 
-
+if torch.cuda.is_available():
+  DTYPE = torch.float16 if '2060' in torch.cuda.get_device_name() else torch.bfloat16
+  CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt'
+else:
+  DTYPE = torch.float16
+  CHECKPOINT = f'/{ROOTDIR}/checkpoint-cpu.pt'
 
 if platform.system() == 'Linux':
   if ARCH == 'riscv':

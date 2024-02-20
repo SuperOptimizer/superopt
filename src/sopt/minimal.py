@@ -20,14 +20,14 @@ import torch
 import random
 import tqdm
 
-from impl import (tokenize_char as tokenize, detokenize_char as detokenize, tkn_char as tkn,
-                  save_checkpoint, load_checkpoint, DTYPE, DEVICE, GENERATE_EVERY,
-                  ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, NUM_TOKENS, LEARNING_RATE, NUM_BATCHES, BATCH_SIZE, WORLD_SIZE)
+from impl import (
+  tokenize_char as tokenize, detokenize_char as detokenize, tkn_char as tkn, save_checkpoint, load_checkpoint,
+  generate_database, DTYPE, DEVICE, GENERATE_EVERY, MODEL_SIZE, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, NUM_TOKENS,
+  LEARNING_RATE, NUM_BATCHES, BATCH_SIZE, WORLD_SIZE)
 from util import randstring, report_cuda_size, timeit
 
 
 def cycle():
-
   training_data = []
   csvs = sorted(os.listdir(f'/{ROOTDIR}/cleandata/'))
   if WORLD_SIZE > 1:
@@ -57,9 +57,8 @@ def cycle():
       yield mysrc, mysrc_mask, mytgt
 
 
-
-def get_model(size, rank):
-  size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[size]
+def get_model(rank):
+  size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]
 
   model = XTransformer(
     dim=[256,512,768,1024][size],
@@ -112,16 +111,11 @@ def get_model(size, rank):
 
   if DEVICE == 'cuda':
     model = model.cuda(device=rank)
-  elif DEVICE == 'mps':
-    model = model.to('mps')
-  elif DEVICE == 'cpu':
-    model = model.to('cpu')
-
-  if WORLD_SIZE > 1:
-    model = FSDP(model, use_orig_params=True)
-
-  if DEVICE == 'cuda':
+    if WORLD_SIZE > 1:
+      model = FSDP(model, use_orig_params=True)
     model = torch.compile(model)
+  else:
+    model = model.to(DEVICE)
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
   params = sum([np.prod(p.size()) for p in model_parameters])
@@ -139,7 +133,7 @@ def train(rank):
     torch.distributed.init_process_group(backend='nccl', rank=rank,world_size=WORLD_SIZE)
     torch.cuda.set_device(rank)
 
-  model = get_model("small", rank)
+  model = get_model(rank)
   optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
   if DEVICE == 'cuda':
     scaler = torch.cuda.amp.GradScaler()
@@ -188,13 +182,13 @@ def train(rank):
 def main():
   print(f'spawning {WORLD_SIZE} GPU(s)')
   if WORLD_SIZE == 1:
-    train(0, DEVICE)
+    train(0)
   else:
-    torch.multiprocessing.spawn(train, args=(DEVICE,), nprocs=WORLD_SIZE,join=True)
+    torch.multiprocessing.spawn(train, args=(), nprocs=WORLD_SIZE,join=True)
 
 if __name__ == '__main__':
   if len(sys.argv) != 2:
-    print("you must specify a trask: train, infer, gen, clean, zstd, sentencepiece")
+    print("you must specify a trask: train, infer, gen")
     print("defaulting to train")
     sys.argv.append("train")
   if sys.argv[1] == 'train':
@@ -203,7 +197,3 @@ if __name__ == '__main__':
     generate_database()
   elif sys.argv[1] == 'infer':
     pass
-  elif sys.argv[1] == 'sentencepiece':
-    sentencepiece_train()
-  elif sys.argv[1] == 'zstd':
-    zstd_train()
