@@ -21,6 +21,7 @@ if torch.cuda.is_available():
   DEVICE = 'cuda'
   WORLD_SIZE = torch.cuda.device_count()
   RAM_SIZE = torch.cuda.get_device_properties(DEVICE).total_memory // 1024 // 1024 // 1024
+  print("per GPU memory available: ", RAM_SIZE)
 else:
   if torch.backends.mps.is_available() and torch.backends.mps.is_built():
     RAM_SIZE = 8
@@ -135,15 +136,15 @@ def get_model(rank, pad_value):
     model = model.to(DEVICE)
 
   if RAM_SIZE <= 8:
-    batch_size = {"small": 8, "medium":1, "large": 0, "xl": 0}[MODEL_SIZE]
+    batch_size = {"small": 8, "medium": 1, "large": 0, "xl": 0}[MODEL_SIZE]
   elif RAM_SIZE <= 16:
-    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+    batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
   elif RAM_SIZE <= 24:
-    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+    batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
   elif RAM_SIZE <= 48:
-    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+    batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
   elif RAM_SIZE <= 80:
-    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+    batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
 
 
   return model, batch_size

@@ -105,7 +105,7 @@ def train(rank):
     torch.distributed.destroy_process_group()
 
 def main():
-  print(f'spawning {WORLD_SIZE} GPU(s)')
+  print(f'spawning {WORLD_SIZE} processes(s)')
   if WORLD_SIZE == 1:
     train(0)
   else:
