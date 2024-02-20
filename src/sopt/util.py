@@ -3,6 +3,7 @@ import time
 import torch
 import random
 import string
+import numpy as np
 
 
 def timeit(func):
@@ -30,6 +31,11 @@ def report_cuda_size():
     print(f'cuda total    : {info.total // 1024 // 1024}MB')
     print(f'cuda free     : {info.free // 1024 // 1024}MB')
     print(f'cuda used     : {info.used // 1024 // 1024}MB')
+
+def report_model_size(model):
+  model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+  params = sum([np.prod(p.size()) for p in model_parameters])
+  print(f"num params {params // 1024 // 1024}M {params // 1024}K ")
 
 def randstring(n):
   return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(n))

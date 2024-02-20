@@ -1,36 +1,32 @@
 import multiprocessing
-from x_transformers import XTransformer
-import numpy as np
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from  subprocess import PIPE, Popen, run
+from  subprocess import PIPE, run
 import os
 import sentencepiece as spm
-import random
-import sys
-import string
 import platform
 import ast
 import csv
 import gzip
 import base64
-import shutil
-import time
-from functools import wraps
 import torch
-import tqdm
+import numpy as np
+from x_transformers import XTransformer
 
 from util import randstring
 
 ARCH = 'x86'
-MODEL_SIZE = "small"
+MODEL_SIZE = "medium"
 
 if torch.cuda.is_available():
   DEVICE = 'cuda'
   WORLD_SIZE = torch.cuda.device_count()
+  RAM_SIZE = torch.cuda.get_device_properties(DEVICE).total_memory // 1024 // 1024 // 1024
 else:
   if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    RAM_SIZE = 8
     DEVICE = 'mps'
   else:
+    RAM_SIZE = 24
     DEVICE = 'cpu'
   WORLD_SIZE = 1
 
@@ -40,17 +36,16 @@ DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
 GENERATE_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
-NUM_TOKENS = 32768 + 2
+NUM_TOKENS = 512
 ENC_SEQ_LEN = 2048
 DEC_SEQ_LEN = 2048
-BATCH_SIZE = 8
 
 if torch.cuda.is_available():
-  DTYPE = torch.float16 if '2060' in torch.cuda.get_device_name() else torch.bfloat16
-  CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}.pt'
+  DTYPE = torch.bfloat16 if torch.cuda.get_device_capability()[0] > 7 else torch.float16
+  CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}-{MODEL_SIZE}.pt'
 else:
   DTYPE = torch.float16
-  CHECKPOINT = f'/{ROOTDIR}/checkpoint-cpu.pt'
+  CHECKPOINT = f'/{ROOTDIR}/checkpoint-cpu-{MODEL_SIZE}.pt'
 
 if platform.system() == 'Linux':
   if ARCH == 'riscv':
@@ -78,6 +73,81 @@ elif platform.system() == 'Darwin':
     OBJDUMP = 'aarch64-elf-objdump'
 
 
+def get_model(rank, pad_value):
+  size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]
+
+  model = XTransformer(
+    dim=[256,512,768,1024][size],
+    pad_value=pad_value,
+    tie_token_emb=True,
+    enc_attn_flash=True,
+    dec_attn_flash=True,
+    return_tgt_loss=True,
+    enc_num_tokens=NUM_TOKENS,
+    enc_depth=[4,8,12,16][size],
+    enc_heads=[4,8,12,16][size],
+    enc_max_seq_len=ENC_SEQ_LEN,
+    dec_num_tokens=NUM_TOKENS,
+    dec_depth=[4,8,12,16][size],
+    dec_heads=[4,8,12,16][size],
+    dec_max_seq_len=DEC_SEQ_LEN,
+
+    enc_attn_num_mem_kv=[6,12,18,24][size],
+    enc_num_memory_tokens=[6,12,18,24][size],
+    enc_use_simple_rmsnorm=True,
+    enc_ff_no_bias=True,
+    enc_ff_swish=True,
+    enc_ff_glu=True,
+    enc_attn_kv_heads=[1,2,3,4][size],
+    enc_attn_gate_values=True,
+    enc_sandwich_coef=[2,4,6,8][size],
+    enc_shift_tokens=1,
+    enc_use_abs_pos_emb=False,
+    enc_attn_on_attn=True,
+    enc_macaron=True,
+    enc_resi_dual=True,
+    enc_resi_dual_scale=0.1,
+
+    dec_attn_num_mem_kv=[6,12,18,24][size],
+    dec_num_memory_tokens=[6,12,18,24][size],
+    dec_use_simple_rmsnorm=True,
+    dec_ff_no_bias=True,
+    dec_ff_swish=True,
+    dec_ff_glu=True,
+    dec_attn_kv_heads=[1,2,3,4][size],
+    dec_attn_gate_values=True,
+    dec_sandwich_coef=[2,4,6,8][size],
+    dec_shift_tokens=1,
+    dec_use_abs_pos_emb=False,
+    dec_attn_on_attn=True,
+    dec_macaron=True,
+    dec_resi_dual=True,
+    dec_resi_dual_scale=0.1,
+  )
+
+  if DEVICE == 'cuda':
+    model = model.cuda(device=rank)
+    if WORLD_SIZE > 1:
+      model = FSDP(model, use_orig_params=True)
+    if '2060' not in torch.cuda.get_device_name():
+      model = torch.compile(model)
+  else:
+    model = model.to(DEVICE)
+
+  if RAM_SIZE <= 8:
+    batch_size = {"small": 8, "medium":1, "large": 0, "xl": 0}[MODEL_SIZE]
+  elif RAM_SIZE <= 16:
+    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+  elif RAM_SIZE <= 24:
+    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+  elif RAM_SIZE <= 48:
+    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+  elif RAM_SIZE <= 80:
+    batch_size = {"small": 8, "medium":2, "large": 0, "xl": 0}[MODEL_SIZE]
+
+
+  return model, batch_size
+
 def tkn_sp(t):
   if t == 'DECSTART':
     return 32768
@@ -86,10 +156,10 @@ def tkn_sp(t):
   assert False
 
 def tkn_char(t):
-  if t == 'DECSTART':
-    return 257
-  elif t == 'PAD':
+  if t == 'PAD':
     return 256
+  elif t == 'DECSTART':
+    return 257
   assert False
 
 def zstd_train():
