@@ -6,6 +6,11 @@ import string
 import numpy as np
 import itertools
 
+
+def chunkify(l, n):
+  for i in range(0, len(l), n):
+    yield l[i:i + n]
+
 def flatten(*args):
   ret = []
   for arg in args:

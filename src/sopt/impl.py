@@ -15,7 +15,7 @@ import torch
 import numpy as np
 from x_transformers import XTransformer
 
-from util import randstring, flatten
+from util import randstring, flatten, chunkify
 
 ARCH = 'x86'
 MODEL_SIZE = "medium"
@@ -326,7 +326,7 @@ def compile(txt_gz):
   ret = []
   i = 0
   with gzip.open(f'/{ROOTDIR}/yarpgen/{txt_gz}', 'rt') as f:
-    for prog in f:
+    for prog in list(f)[:10]:
       i += 1
       print(f"processed {i}")
 
@@ -414,8 +414,11 @@ def compile_yarpgen():
     args = []
     for txt_gz in sorted(os.listdir(f'{ROOTDIR}/yarpgen')):
       args.append(txt_gz)
-    ret = p.map(compile, args)
-    print()
+    for i,chunk in enumerate(chunkify(flatten(p.map(compile, args)), 100)):
+      with gzip.open(f'{ROOTDIR}/cleandata/{i}.csv.gz', 'wt') as outf:
+        writer = csv.DictWriter(outf, ['unopt','opt'])
+        writer.writeheader()
+        writer.writerows(chunk)
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
   if DEVICE == 'cuda':
