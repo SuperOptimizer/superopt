@@ -326,7 +326,7 @@ def compile(txt_gz):
   ret = []
   i = 0
   with gzip.open(f'/{ROOTDIR}/yarpgen/{txt_gz}', 'rt') as f:
-    for prog in list(f)[:10]:
+    for prog in f:
       i += 1
       print(f"processed {i}")
 
