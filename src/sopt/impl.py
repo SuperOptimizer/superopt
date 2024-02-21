@@ -69,7 +69,7 @@ if platform.system() == 'Linux':
     OBJDUMP = 'riscv64-linux-gnu-objdump'
   elif ARCH == 'x86':
     GCC = 'gcc'
-    CLANG = 'clang-17'
+    CLANG = 'clang-18'
     STRIP = 'strip'
     OBJDUMP = 'objdump'
     OBJCOPY = 'objcopy'
