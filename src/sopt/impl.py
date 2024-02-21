@@ -391,7 +391,7 @@ def compile(txt_gz):
       os.remove(opt_o)
       os.remove(clang_unopt_o)
       os.remove(clang_opt_o)
-  return ret
+  return txt_gz, ret
 
 
 def generate_yarpgen():
@@ -412,16 +412,21 @@ def compile_yarpgen():
   ncpu = multiprocessing.cpu_count()
   preexisting = os.listdir(f'{ROOTDIR}/cleandata/')
   os.makedirs(f'{ROOTDIR}/cleandata', exist_ok=True)
-  with multiprocessing.Pool(ncpu) as p:
-    args = []
-    for txt_gz in sorted(os.listdir(f'{ROOTDIR}/yarpgen')):
-      if txt_gz.replace('.txt.gz', '.csv.gz') not in preexisting:
-        args.append(txt_gz)
-    for i,chunk in enumerate(chunkify(flatten(p.map(compile, args)), 100)):
-      with gzip.open(f'{ROOTDIR}/cleandata/{i + len(preexisting)}.csv.gz', 'wt') as outf:
-        writer = csv.DictWriter(outf, ['unopt','opt'])
-        writer.writeheader()
-        writer.writerows(chunk)
+  args = []
+  for txt_gz in sorted(os.listdir(f'{ROOTDIR}/yarpgen')):
+    if txt_gz.replace('.txt.gz', '.csv.gz') not in preexisting:
+      args.append(txt_gz)
+  for chunk in chunkify(args,ncpu):
+    with multiprocessing.Pool(ncpu) as p:
+      for ret in p.map(compile, chunk):
+        idx,listings = ret
+        idx = idx.replace('.txt.gz', '.csv.gz')
+        with gzip.open(f'{ROOTDIR}/cleandata/{idx}', 'wt') as outf:
+          writer = csv.DictWriter(outf, ['unopt','opt'])
+          writer.writeheader()
+          writer.writerows(listings)
+
+
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
   if DEVICE == 'cuda':
