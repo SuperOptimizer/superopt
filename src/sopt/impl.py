@@ -43,7 +43,7 @@ ZSTD_DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
 if TOKENIZER == "char":
   NUM_TOKENS = 512
 elif TOKENIZER == "sentencepiece":
-  NUM_TOKENS = 32768 + 2
+  NUM_TOKENS = 8192 + 2
 elif TOKENIZER == "zstd":
   NUM_TOKENS = 258
 elif TOKENIZER == "zstd_sentencepiece":
@@ -164,9 +164,9 @@ def get_model(rank, pad_value):
 
 def tkn_sp(t):
   if t == 'DECSTART':
-    return 32768
+    return 8192
   elif t == 'PAD':
-    return 32769
+    return 8193
   assert False
 
 def tkn_char(t):
@@ -190,18 +190,18 @@ def zstd_train():
           outf.write(opt)
 
 def sentencepiece_train(zstd=False):
-  with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
-    for db_idx in range(len(os.listdir(f'/{ROOTDIR}/cleandata/'))):
-      with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz', 'rt') as f:
-        reader = csv.DictReader(f)
-        for entry in reader:
-          unopt = ast.literal_eval(entry['unopt'])
-          opt = ast.literal_eval(entry['opt'])
+  with (open(f'{TMP}/sentencepiece_encoder.txt', 'w+t') as encoder_f,
+        open(f'{TMP}/sentencepiece_decoder.txt', 'w+t') as decoder_f):
+    for db in os.listdir(f'/{ROOTDIR}/cleandata/')[:10]:
+      with gzip.open(f'/{ROOTDIR}/cleandata/{db}', 'rt') as f:
+        for entry in chunkify(f.readlines(),2):
+          unopt = ast.literal_eval(entry[0])
+          opt = ast.literal_eval(entry[1])
           if zstd:
             unopt = zstd_compress(unopt)
             opt = zstd_compress(opt)
-          outf.write(base64.b64encode(unopt).decode('utf-8') + '\n')
-          outf.write(base64.b64encode(opt).decode('utf-8') + '\n')
+          encoder_f.write(base64.b64encode(unopt).decode('utf-8') + '\n')
+          decoder_f.write(base64.b64encode(opt).decode('utf-8') + '\n')
 
 
 
@@ -239,7 +239,7 @@ def tokenize_sp(data: bytes):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86_8k_sp.model')
+    sp.load(f'{ROOTDIR}/misc/x86_sp8k.model')
   tokens = sp.encode(base64.b64encode(data).decode('utf-8'))
   return tokens
 
@@ -248,7 +248,7 @@ def detokenize_sp(tokens: [int]):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86_8k_sp.model')
+    sp.load(f'{ROOTDIR}/misc/x86_sp8k.model')
   tokens = [t for t in tokens if t < NUM_TOKENS-2]
   tokens = sp.decode(tokens)
   try:
@@ -429,9 +429,11 @@ def clean_yarpgen():
   all_programs = set()
   for txt_gz in sorted(os.listdir(f'{ROOTDIR}/rawdata')):
     with gzip.open(f'{ROOTDIR}/rawdata/{txt_gz}', 'rt') as inf, gzip.open(f'{ROOTDIR}/cleandata/{txt_gz}', 'w+t') as outf:
+      print(f"processing {txt_gz}")
       for line in chunkify(inf.readlines(),2):
         unopt,opt = line
         if (h := hash(unopt)) in all_programs:
+          print("skipping prog")
           continue
         all_programs.add(h)
         outf.write(unopt)

@@ -34,7 +34,7 @@ def cycle(batch_size, training_data, txts):
         opt = ast.literal_eval(entry[1])
         unopt_tokens = tokenize(unopt)
         opt_tokens = tokenize(opt)
-        print(f"len unopt tokens {len(unopt_tokens)} len opt tokens {len(opt_tokens)} len unopt {len(unopt)} len opt {len(opt)}")
+        #print(f"len unopt tokens {len(unopt_tokens)} len opt tokens {len(opt_tokens)} len unopt {len(unopt)} len opt {len(opt)}")
         if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
           continue
         opt_tokens.insert(0, tkn('DECSTART'))
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     print("you must specify a trask: train, infer, gen")
     print("defaulting to train")
     sys.argv.append("gen")
-  #sentencepiece_train(True)
+  #sentencepiece_train()
   #zstd_train()
   #if sys.argv[1] == 'train':
   main()
