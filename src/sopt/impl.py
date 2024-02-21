@@ -410,14 +410,15 @@ def generate_yarpgen():
 
 def compile_yarpgen():
   ncpu = multiprocessing.cpu_count()
-  n_preexisting = len(os.listdir(f'{ROOTDIR}/cleandata/'))
+  preexisting = os.listdir(f'{ROOTDIR}/cleandata/')
   os.makedirs(f'{ROOTDIR}/cleandata', exist_ok=True)
   with multiprocessing.Pool(ncpu) as p:
     args = []
     for txt_gz in sorted(os.listdir(f'{ROOTDIR}/yarpgen')):
-      args.append(txt_gz)
+      if txt_gz.replace('.txt.gz', '.csv.gz') not in preexisting:
+        args.append(txt_gz)
     for i,chunk in enumerate(chunkify(flatten(p.map(compile, args)), 100)):
-      with gzip.open(f'{ROOTDIR}/cleandata/{i + n_preexisting}.csv.gz', 'wt') as outf:
+      with gzip.open(f'{ROOTDIR}/cleandata/{i + len(preexisting)}.csv.gz', 'wt') as outf:
         writer = csv.DictWriter(outf, ['unopt','opt'])
         writer.writeheader()
         writer.writerows(chunk)
