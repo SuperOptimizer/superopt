@@ -326,7 +326,7 @@ def compile(txt_gz):
   ret = []
   i = 0
   with gzip.open(f'/{ROOTDIR}/yarpgen/{txt_gz}', 'rt') as f:
-    for prog in f:
+    for prog in list(f)[:10]:
       i += 1
       print(f"processed {i}")
 
@@ -376,12 +376,12 @@ def compile(txt_gz):
       with open(clang_opt_o, 'rb') as f:
         opt_clang = f.read()
 
-      if len(unopt_gcc) > 60000 or len(opt_gcc) > 60000:
+      if len(unopt_gcc) > 50000 or len(opt_gcc) > 50000:
         print(f"skipping too long prog {len(unopt_gcc)} {len(opt_gcc)}")
       else:
         ret.append({'unopt':unopt_gcc, 'opt': opt_gcc})
 
-      if len(unopt_clang) > 60000 or len(opt_clang) > 60000:
+      if len(unopt_clang) > 50000 or len(opt_clang) > 50000:
         print(f"skipping too long prog {len(unopt_clang)} {len(opt_clang)}")
       else:
         if not (unopt_clang == unopt_gcc and opt_clang == opt_gcc):
@@ -410,23 +410,40 @@ def generate_yarpgen():
 
 def compile_yarpgen():
   ncpu = multiprocessing.cpu_count()
-  preexisting = os.listdir(f'{ROOTDIR}/cleandata/')
-  os.makedirs(f'{ROOTDIR}/cleandata', exist_ok=True)
+  preexisting = os.listdir(f'{ROOTDIR}/rawdata/')
+  os.makedirs(f'{ROOTDIR}/rawdata', exist_ok=True)
   args = []
   for txt_gz in sorted(os.listdir(f'{ROOTDIR}/yarpgen')):
-    if txt_gz.replace('.txt.gz', '.csv.gz') not in preexisting:
+    if txt_gz not in preexisting:
       args.append(txt_gz)
   for chunk in chunkify(args,ncpu):
     with multiprocessing.Pool(ncpu) as p:
       for ret in p.map(compile, chunk):
         idx,listings = ret
-        idx = idx.replace('.txt.gz', '.csv.gz')
-        with gzip.open(f'{ROOTDIR}/cleandata/{idx}', 'wt') as outf:
-          writer = csv.DictWriter(outf, ['unopt','opt'])
-          writer.writeheader()
-          writer.writerows(listings)
+        with gzip.open(f'{ROOTDIR}/rawdata/{idx}', 'wt') as outf:
+          for l in listings:
+            outf.write(str(l['unopt']) + '\n')
+            outf.write(str(l['opt']) + '\n')
 
-
+def clean_yarpgen():
+  all_programs = set()
+  for txt_gz in sorted(os.listdir(f'{ROOTDIR}/rawdata')):
+    with gzip.open(f'{ROOTDIR}/rawdata/{txt_gz}', 'rt') as inf, gzip.open(f'{ROOTDIR}/cleandata/{txt_gz}', 'w+t') as outf:
+      for line in chunkify(inf.readlines(),2):
+        unopt,opt = line
+        if (h := hash(unopt)) in all_programs:
+          continue
+        all_programs.add(h)
+        outf.write(unopt)
+        outf.write(opt)
+      #reader = csv.DictReader(inf)
+      #writer = csv.DictWriter(outf, ['unopt','opt'])
+      #for row in reader:
+      #  if (h := hash(row['unopt'])) in all_programs:
+      #    continue
+      #  all_programs.add(h)
+      #  writer.writerow(row)
+      #  print()
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
   if DEVICE == 'cuda':

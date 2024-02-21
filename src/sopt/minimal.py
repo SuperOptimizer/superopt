@@ -10,28 +10,28 @@ import tqdm
 
 
 from impl import (
-  save_checkpoint, load_checkpoint, compile_yarpgen, generate_yarpgen, sentencepiece_train, zstd_train, gen_yarpgen, get_model,
+  save_checkpoint, load_checkpoint, compile_yarpgen, generate_yarpgen, clean_yarpgen, sentencepiece_train, zstd_train, gen_yarpgen, get_model,
   DTYPE, DEVICE, GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, WORLD_SIZE, TOKENIZER)
 if TOKENIZER == 'char':
   from impl import tokenize_char as tokenize, detokenize_char as detokenize, tkn_char as tkn
 elif TOKENIZER == "sentencepiece":
   from impl import tokenize_sp as tokenize, detokenize_sp as detokenize, tkn_sp as tkn
 
-from util import report_cuda_size, timeit, report_model_size
+from util import report_cuda_size, timeit, report_model_size, chunkify
 
 
-def cycle(batch_size, training_data, csvs):
+def cycle(batch_size, training_data, txts):
   if len(training_data) < batch_size:
-    csvgz = random.choice(csvs)
-    csvs.remove(csvgz)
-    if len(csvs) == 0:
-      csvs = os.listdir(f'/{ROOTDIR}/cleandata/')
-    print(f"loading /{ROOTDIR}/cleandata/{csvgz}")
-    with gzip.open(f'/{ROOTDIR}/cleandata/{csvgz}','rt') as f:
-      reader = csv.DictReader(f)
-      for entry in reader:
-        unopt = ast.literal_eval(entry['unopt'])
-        opt = ast.literal_eval(entry['opt'])
+    txtgz = random.choice(txts)
+    txts.remove(txtgz)
+    if len(txts) == 0:
+      txts = os.listdir(f'/{ROOTDIR}/cleandata/')
+    print(f"loading /{ROOTDIR}/cleandata/{txtgz}")
+    with gzip.open(f'/{ROOTDIR}/cleandata/{txtgz}','rt') as f:
+      asdf = f.readlines()
+      for entry in chunkify(asdf,2):
+        unopt = ast.literal_eval(entry[0])
+        opt = ast.literal_eval(entry[1])
         unopt_tokens = tokenize(unopt)
         opt_tokens = tokenize(opt)
         print(f"len unopt tokens {len(unopt_tokens)} len opt tokens {len(opt_tokens)} len unopt {len(unopt)} len opt {len(opt)}")
@@ -49,7 +49,7 @@ def cycle(batch_size, training_data, csvs):
     mysrc = torch.tensor(list(x[0] for x in batch)).long().to(DEVICE)
     mytgt = torch.tensor(list(x[1] for x in batch)).long().to(DEVICE)
     mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
-    return mysrc, mysrc_mask, mytgt, training_data, csvs
+    return mysrc, mysrc_mask, mytgt, training_data, txts
 
 
 @timeit
@@ -70,13 +70,13 @@ def train(rank):
   model, optim, loss = load_checkpoint(model, optim, 0)
 
   training_data = []
-  csvs = os.listdir(f'/{ROOTDIR}/cleandata/')
+  txts = os.listdir(f'/{ROOTDIR}/cleandata/')
 
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt, training_data, csvs = cycle(batch_size, training_data, csvs)
+    src, src_mask, tgt, training_data, txts = cycle(batch_size, training_data, txts)
     if DEVICE == 'cuda':
       with torch.cuda.amp.autocast(dtype=DTYPE):
         loss = model(src, tgt, mask=src_mask)
@@ -97,7 +97,7 @@ def train(rank):
         if i > 0:
           save_checkpoint(model,  optim, loss, scaler, scheduler)
         model.eval()
-        src, src_mask, tgt, training_data, csvs = cycle(batch_size, training_data, csvs)
+        src, src_mask, tgt, training_data, txts = cycle(batch_size, training_data, txts)
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
         start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
@@ -127,9 +127,10 @@ if __name__ == '__main__':
   #sentencepiece_train(True)
   #zstd_train()
   #if sys.argv[1] == 'train':
-  #  main()
+  main()
   #elif sys.argv[1] == 'gen':
   #generate_yarpgen()
-  compile_yarpgen()
+  #compile_yarpgen()
+  #clean_yarpgen()
   #elif sys.argv[1] == 'infer':
   #  pass
