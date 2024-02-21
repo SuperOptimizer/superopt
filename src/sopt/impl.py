@@ -396,6 +396,7 @@ def compile(txt_gz):
 
 def generate_yarpgen():
   print("generating yarpgen")
+  n_preexisting = len(os.listdir(f'{ROOTDIR}/yarpgen/'))
   ncpu = multiprocessing.cpu_count()
   for uuid in range(ncpu):
     os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
@@ -403,7 +404,7 @@ def generate_yarpgen():
     print('processed', x)
     with multiprocessing.Pool(ncpu) as p:
       ret = p.map(gen_yarpgen, list(range(ncpu)))
-    with gzip.open(f'{ROOTDIR}/yarpgen/{x}.txt.gz', 'w+t') as outf:
+    with gzip.open(f'{ROOTDIR}/yarpgen/{x + n_preexisting}.txt.gz', 'w+t') as outf:
       for line in flatten(ret):
         outf.write(line + '\n')
 
