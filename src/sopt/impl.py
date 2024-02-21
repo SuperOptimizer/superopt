@@ -1,6 +1,8 @@
 import multiprocessing
+import shutil
+
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from  subprocess import PIPE, run
+from  subprocess import PIPE, run, Popen
 import os
 import sentencepiece as spm
 import platform
@@ -8,14 +10,18 @@ import ast
 import csv
 import gzip
 import base64
+import shutil
 import torch
 import numpy as np
 from x_transformers import XTransformer
 
-from util import randstring
+from util import randstring, flatten
 
 ARCH = 'x86'
 MODEL_SIZE = "medium"
+TOKENIZER = "sentencepiece"
+
+CCFLAGS = '-Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 -xc'
 
 if torch.cuda.is_available():
   DEVICE = 'cuda'
@@ -33,13 +39,21 @@ else:
 
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 TMP = '/tmp/sopt'
-DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
+ZSTD_DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
+if TOKENIZER == "char":
+  NUM_TOKENS = 512
+elif TOKENIZER == "sentencepiece":
+  NUM_TOKENS = 32768 + 2
+elif TOKENIZER == "zstd":
+  NUM_TOKENS = 258
+elif TOKENIZER == "zstd_sentencepiece":
+  NUM_TOKENS = 4096 + 2
+
+ENC_SEQ_LEN = 2048
+DEC_SEQ_LEN = 2048
 GENERATE_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
-NUM_TOKENS = 512
-ENC_SEQ_LEN = 2048
-DEC_SEQ_LEN = 2048
 
 if torch.cuda.is_available():
   DTYPE = torch.bfloat16 if torch.cuda.get_device_capability()[0] > 7 else torch.float16
@@ -50,26 +64,27 @@ else:
 
 if platform.system() == 'Linux':
   if ARCH == 'riscv':
-    CC = 'riscv64-linux-gnu-gcc'
+    GCC = 'riscv64-linux-gnu-gcc'
     STRIP = 'riscv64-linux-gnu-strip'
     OBJDUMP = 'riscv64-linux-gnu-objdump'
   elif ARCH == 'x86':
-    CC = 'gcc'
+    GCC = 'gcc'
+    CLANG = 'clang-17'
     STRIP = 'strip'
     OBJDUMP = 'objdump'
     OBJCOPY = 'objcopy'
 elif platform.system() == 'Darwin':
   if ARCH == 'riscv':
-    CC = 'riscv64-elf-gcc'
+    GCC = 'riscv64-elf-gcc'
     STRIP = 'riscv64-elf-strip'
     OBJDUMP = 'riscv64-elf-objdump'
   elif ARCH == 'x86':
-    CC = 'x86_64-elf-gcc'
+    GCC = 'x86_64-elf-gcc'
     STRIP = 'x86_64-elf-strip'
     OBJDUMP = 'x86_64-elf-objdump'
     OBJCOPY = 'x86_64-elf-objcopy'
   elif ARCH == 'aarch64':
-    CC = 'aarch64-elf-gcc'
+    GCC = 'aarch64-elf-gcc'
     STRIP = 'aarch64-elf-strip'
     OBJDUMP = 'aarch64-elf-objdump'
 
@@ -145,7 +160,6 @@ def get_model(rank, pad_value):
     batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
   elif RAM_SIZE <= 80:
     batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
-
   return model, batch_size
 
 def tkn_sp(t):
@@ -175,24 +189,57 @@ def zstd_train():
         with open(f'/{TMP}/all_objs/{randstring(16)}.o','w+b') as outf:
           outf.write(opt)
 
-def sentencepiece_train():
-  with open(f'{TMP}/sentencepiece.txt', 'w+b') as outf:
+def sentencepiece_train(zstd=False):
+  with open(f'{TMP}/sentencepiece.txt', 'w+t') as outf:
     for db_idx in range(len(os.listdir(f'/{ROOTDIR}/cleandata/'))):
       with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz', 'rt') as f:
         reader = csv.DictReader(f)
         for entry in reader:
           unopt = ast.literal_eval(entry['unopt'])
           opt = ast.literal_eval(entry['opt'])
-          outf.write(unopt)
-          outf.write(opt)
+          if zstd:
+            unopt = zstd_compress(unopt)
+            opt = zstd_compress(opt)
+          outf.write(base64.b64encode(unopt).decode('utf-8') + '\n')
+          outf.write(base64.b64encode(opt).decode('utf-8') + '\n')
+
+
 
 sp = None
+
+def tokenize_zstdsp(data: bytes):
+  global sp
+  if sp is None:
+    sp = spm.SentencePieceProcessor()
+    sp.load(f'{ROOTDIR}/misc/x86_zstd_sp8k.model')
+  return sp.encode(base64.b64encode(zstd_compress(data)))
+
+def detokenize_zstdsp(tokens: [int]):
+  global sp
+  if sp is None:
+    sp = spm.SentencePieceProcessor()
+    sp.load(f'{ROOTDIR}/misc/x86_zstd_sp8k.model')
+  tokens = [t for t in tokens if t < NUM_TOKENS-2]
+  tokens = sp.decode(tokens)
+  try:
+    tokens = base64.b64decode(tokens)
+    tokens = zstd_decompress(tokens)
+  except:
+    tokens = "invalid".encode('utf-8')
+  return tokens
+
+def tokenize_zstd(data:bytes):
+  return zstd_compress(data)
+
+def detokenize_zstd(data:[int]):
+  data = [x for x in data if 0 <= x <= 255]
+  return zstd_decompress(bytes(data))
 
 def tokenize_sp(data: bytes):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86_sopt_32k.model')
+    sp.load(f'{ROOTDIR}/misc/x86_8k_sp.model')
   tokens = sp.encode(base64.b64encode(data).decode('utf-8'))
   return tokens
 
@@ -201,7 +248,7 @@ def detokenize_sp(tokens: [int]):
   global sp
   if sp is None:
     sp = spm.SentencePieceProcessor()
-    sp.load(f'{ROOTDIR}/misc/x86_sopt_32k.model')
+    sp.load(f'{ROOTDIR}/misc/x86_8k_sp.model')
   tokens = [t for t in tokens if t < NUM_TOKENS-2]
   tokens = sp.decode(tokens)
   try:
@@ -251,99 +298,124 @@ def detokenize_char(tokens: [int]):
       pass #no need to pass meta tokens to detokenize
   return bytes(ret)
 
-def zstd_compress(data: bytes, dictionary: str) -> bytes:
-  ret = run(f"zstd -D {dictionary} --ultra -22 -c -".split(), input=data,  stdout=PIPE, stderr=PIPE)
+def zstd_compress(data: bytes) -> bytes:
+  ret = run(f"zstd -D {ZSTD_DICTIONARY} --ultra -22 -c -".split(), input=data,  stdout=PIPE, stderr=PIPE)
   return ret.stdout
 
-def zstd_decompress(data: [int], dictionary: str) -> bytes:
-  data = [x for x in data if 0 <= x <= 255]
-  ret = run(f"zstd -D {dictionary} --ultra -22 -d -c -".split(), input=bytes(data),  stdout=PIPE, stderr=PIPE)
+def zstd_decompress(data: bytes) -> bytes:
+  ret = run(f"zstd -D {ZSTD_DICTIONARY} --ultra -22 -d -c -".split(), input=bytes(data),  stdout=PIPE, stderr=PIPE)
   if len(ret.stderr) > 0:
     return ret.stderr + bytes(data)
   return ret.stdout
 
+def gen_yarpgen(uuid):
+  ret = []
+  for x in range(100):
+    if uuid == 0 and x % 10 == 0:
+      print(x)
+    yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    preprocessed = run(f'{GCC} -E -xc /{TMP}/yarpgen_{uuid}/func.c'.split(),stdin=PIPE,stdout=PIPE,stderr=PIPE)
+    prog = preprocessed.stdout.decode('utf-8')
+    prog = ' '.join(line for line in prog.split('\n') if not line.startswith('#'))
+    ret.append(prog)
+  return ret
 
-def gen(args):
-  uuid, all_inputs = args
-  outpath = f'/{ROOTDIR}/rawdata/db_{randstring(16)}.csv.gz'
-  with gzip.open(outpath,'w+t') as f:
-    writer = csv.DictWriter(f,['c','unopt','opt'])
-    writer.writeheader()
-    for x in range(100):
-      if uuid == 0 and x % 10 == 0:
-        print(x)
 
-      func_c = f'/{TMP}/yarpgen_{uuid}/func.c'
-      unopt_o = f'/{TMP}/yarpgen_{uuid}/func.c.unopt.o'
-      opt_o = f'/{TMP}/yarpgen_{uuid}/func.c.opt.o'
+def compile(txt_gz):
+  print(f"processing {txt_gz}")
+  ret = []
+  i = 0
+  with gzip.open(f'/{ROOTDIR}/yarpgen/{txt_gz}', 'rt') as f:
+    for prog in f:
+      i += 1
+      print(f"processed {i}")
 
-      yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      unoptgcc = run(f'{CC} -o {unopt_o} -O0 -Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 -xc -c {func_c}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      unoptclang = run(f'clang -o {unopt_o} -O0 -Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 -xc -c {func_c}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      unopt_o = f'/{TMP}/{randstring(32)}.o'
+      opt_o = f'/{TMP}/{randstring(32)}.o'
 
-      optgcc = run(f'{CC} -o {opt_o} -O3 -Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 -xc -c {func_c}'.split(),stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      optclang = run(f'clang -o {opt_o} -O3 -Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 -xc -c {func_c}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      clang_unopt_o = f'/{TMP}/{randstring(32)}.o'
+      clang_opt_o = f'/{TMP}/{randstring(32)}.o'
 
-      unopt = run(f'{STRIP} {unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      opt = run(f'{STRIP} {opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      unopt = run(f'{OBJCOPY} --remove-section .comment {unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      opt = run(f'{OBJCOPY} --remove-section .comment {opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      with  open(func_c) as f:
-        prog = f.read()
+      unopt_cc_gcc = Popen(f'{GCC} -o {unopt_o} -O0 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_cc_gcc = Popen(f'{GCC} -o {opt_o} -O3 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      unopt_cc_clang = Popen(f'{CLANG} -o {clang_unopt_o} -O0 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_cc_clang = Popen(f'{CLANG} -o {clang_opt_o} -O3 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+
+      unopt_cc_gcc.communicate(prog.encode('utf-8'))
+      opt_cc_gcc.communicate(prog.encode('utf-8'))
+      unopt_cc_clang.communicate(prog.encode('utf-8'))
+      opt_cc_clang.communicate(prog.encode('utf-8'))
+
+      unopt_strip_gcc = Popen(f'{STRIP} {unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_strip_gcc = Popen(f'{STRIP} {opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      unopt_strip_clang = Popen(f'{STRIP} {clang_unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_strip_clang = Popen(f'{STRIP} {clang_opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+
+      unopt_strip_gcc.communicate()
+      opt_strip_gcc.communicate()
+      unopt_strip_clang.communicate()
+      opt_strip_clang.communicate()
+
+      unopt_objcopy_gcc = Popen(f'{OBJCOPY} --remove-section .comment {unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_objcopy_gcc = Popen(f'{OBJCOPY} --remove-section .comment {opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      unopt_objcopy_clang = Popen(f'{OBJCOPY} --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {clang_unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_objcopy_clang = Popen(f'{OBJCOPY} --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {clang_opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+
+      unopt_objcopy_gcc.communicate()
+      opt_objcopy_gcc.communicate()
+      unopt_objcopy_clang.communicate()
+      opt_objcopy_clang.communicate()
+
       with open(unopt_o, 'rb') as f:
-        unopt = f.read()
+        unopt_gcc = f.read()
       with open(opt_o, 'rb') as f:
-        opt = f.read()
+        opt_gcc = f.read()
 
-      if h := hash(unopt) in all_inputs:
-        continue
-      all_inputs.add(h)
-      if len(unopt) > 16384 or len(opt) > 16384:
-        print("skipping too long prog")
-        continue
-      writer.writerow({'c': prog, 'unopt': unopt, 'opt': opt})
-  return outpath
+      with open(clang_unopt_o, 'rb') as f:
+        unopt_clang = f.read()
+      with open(clang_opt_o, 'rb') as f:
+        opt_clang = f.read()
 
-def clean_database(files, all_inputs):
-  print("cleaning database")
-  i = len(os.listdir(f'/{ROOTDIR}/cleandata'))
-  for gz in files:
-    print(f"cleaning {gz}")
-    out = list()
-    with gzip.open(gz, 'rt') as inf:
-      reader = csv.DictReader(inf)
-      for row in reader:
-        if h := hash(row['unopt']) not in all_inputs:
-          all_inputs.add(h)
-          out.append(row)
-    with gzip.open(f'/{ROOTDIR}/cleandata/processed_{i}.csv.gz', 'w+t') as outf:
-      writer = csv.DictWriter(outf, ['c', 'unopt', 'opt'])
-      writer.writeheader()
-      writer.writerows(out)
-      i+=1
-  return all_inputs
+      if len(unopt_gcc) > 60000 or len(opt_gcc) > 60000:
+        print(f"skipping too long prog {len(unopt_gcc)} {len(opt_gcc)}")
+      else:
+        ret.append({'unopt':unopt_gcc, 'opt': opt_gcc})
+
+      if len(unopt_clang) > 60000 or len(opt_clang) > 60000:
+        print(f"skipping too long prog {len(unopt_clang)} {len(opt_clang)}")
+      else:
+        if not (unopt_clang == unopt_gcc and opt_clang == opt_gcc):
+          ret.append({'unopt':unopt_clang, 'opt': opt_clang})
+
+      os.remove(unopt_o)
+      os.remove(opt_o)
+      os.remove(clang_unopt_o)
+      os.remove(clang_opt_o)
+  return ret
 
 
-def generate_database():
-  ALL_INPUTS = set()
-  print("generating database")
+def generate_yarpgen():
+  print("generating yarpgen")
   ncpu = multiprocessing.cpu_count()
-  os.makedirs(f'{TMP}/data', exist_ok=True)
-  os.makedirs(f'{TMP}/all_yarpgen', exist_ok=True)
-  os.makedirs(f'{ROOTDIR}/rawdata', exist_ok=True)
-  os.makedirs(f'{ROOTDIR}/cleandata', exist_ok=True)
   for uuid in range(ncpu):
     os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
-  print(f"spawning {ncpu} threads")
   for x in range(100):
     print('processed', x)
     with multiprocessing.Pool(ncpu) as p:
-      args = []
-      for x in range(ncpu):
-        args.append((x,ALL_INPUTS))
-      ret = p.map(gen, args)
-    #ret = gen(0)
-    ALL_INPUTS = clean_database(ret, ALL_INPUTS)
+      ret = p.map(gen_yarpgen, list(range(ncpu)))
+    with gzip.open(f'{ROOTDIR}/yarpgen/{x}.txt.gz', 'w+t') as outf:
+      for line in flatten(ret):
+        outf.write(line + '\n')
+
+def compile_yarpgen():
+  ncpu = multiprocessing.cpu_count()
+  os.makedirs(f'{ROOTDIR}/cleandata', exist_ok=True)
+  with multiprocessing.Pool(ncpu) as p:
+    args = []
+    for txt_gz in sorted(os.listdir(f'{ROOTDIR}/yarpgen')):
+      args.append(txt_gz)
+    ret = p.map(compile, args)
+    print()
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
   if DEVICE == 'cuda':

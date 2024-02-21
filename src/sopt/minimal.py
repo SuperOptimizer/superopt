@@ -8,10 +8,15 @@ import torch
 import random
 import tqdm
 
+
 from impl import (
-  tokenize_char as tokenize, detokenize_char as detokenize, tkn_char as tkn, save_checkpoint, load_checkpoint,
-  generate_database, get_model,
-  DTYPE, DEVICE, GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, WORLD_SIZE)
+  save_checkpoint, load_checkpoint, compile_yarpgen, generate_yarpgen, sentencepiece_train, zstd_train, gen_yarpgen, get_model,
+  DTYPE, DEVICE, GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, WORLD_SIZE, TOKENIZER)
+if TOKENIZER == 'char':
+  from impl import tokenize_char as tokenize, detokenize_char as detokenize, tkn_char as tkn
+elif TOKENIZER == "sentencepiece":
+  from impl import tokenize_sp as tokenize, detokenize_sp as detokenize, tkn_sp as tkn
+
 from util import report_cuda_size, timeit, report_model_size
 
 
@@ -29,6 +34,7 @@ def cycle(batch_size, training_data, csvs):
         opt = ast.literal_eval(entry['opt'])
         unopt_tokens = tokenize(unopt)
         opt_tokens = tokenize(opt)
+        print(f"len unopt tokens {len(unopt_tokens)} len opt tokens {len(opt_tokens)} len unopt {len(unopt)} len opt {len(opt)}")
         if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
           continue
         opt_tokens.insert(0, tkn('DECSTART'))
@@ -43,7 +49,7 @@ def cycle(batch_size, training_data, csvs):
     mysrc = torch.tensor(list(x[0] for x in batch)).long().to(DEVICE)
     mytgt = torch.tensor(list(x[1] for x in batch)).long().to(DEVICE)
     mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
-    yield mysrc, mysrc_mask, mytgt, training_data, csvs
+    return mysrc, mysrc_mask, mytgt, training_data, csvs
 
 
 @timeit
@@ -70,7 +76,7 @@ def train(rank):
     model.train()
     optim.zero_grad()
 
-    src, src_mask, tgt, training_data, csvs = next(cycle(batch_size, training_data, csvs))
+    src, src_mask, tgt, training_data, csvs = cycle(batch_size, training_data, csvs)
     if DEVICE == 'cuda':
       with torch.cuda.amp.autocast(dtype=DTYPE):
         loss = model(src, tgt, mask=src_mask)
@@ -91,7 +97,7 @@ def train(rank):
         if i > 0:
           save_checkpoint(model,  optim, loss, scaler, scheduler)
         model.eval()
-        src, src_mask, tgt, training_data, csvs = next(cycle(batch_size, training_data, csvs))
+        src, src_mask, tgt, training_data, csvs = cycle(batch_size, training_data, csvs)
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
         start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
@@ -117,10 +123,13 @@ if __name__ == '__main__':
   if len(sys.argv) != 2:
     print("you must specify a trask: train, infer, gen")
     print("defaulting to train")
-    sys.argv.append("train")
-  if sys.argv[1] == 'train':
-    main()
-  elif sys.argv[1] == 'gen':
-    generate_database()
-  elif sys.argv[1] == 'infer':
-    pass
+    sys.argv.append("gen")
+  #sentencepiece_train(True)
+  #zstd_train()
+  #if sys.argv[1] == 'train':
+  #  main()
+  #elif sys.argv[1] == 'gen':
+  #generate_yarpgen()
+  compile_yarpgen()
+  #elif sys.argv[1] == 'infer':
+  #  pass

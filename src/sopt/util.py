@@ -4,6 +4,16 @@ import torch
 import random
 import string
 import numpy as np
+import itertools
+
+def flatten(*args):
+  ret = []
+  for arg in args:
+    if isinstance(arg,list):
+      ret.extend(flatten(*arg))
+    else:
+      ret.append(arg)
+  return ret
 
 
 def timeit(func):
