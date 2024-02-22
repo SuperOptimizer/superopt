@@ -43,6 +43,7 @@ def cycle(batch_size, training_data, txts):
         unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
         opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
         training_data.append([unopt_tokens, opt_tokens, mask])
+    print(f"done loading /{ROOTDIR}/cleandata/{txtgz}")
   while len(training_data) > batch_size:
     batch = training_data[:batch_size]
     training_data = training_data[batch_size:]

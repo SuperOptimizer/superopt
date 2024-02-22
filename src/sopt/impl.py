@@ -51,7 +51,7 @@ elif TOKENIZER == "zstd_sentencepiece":
 
 ENC_SEQ_LEN = 2048
 DEC_SEQ_LEN = 2048
-GENERATE_EVERY = 100
+GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 
@@ -123,6 +123,9 @@ def get_model(rank, pad_value):
     enc_macaron=True,
     enc_resi_dual=True,
     enc_resi_dual_scale=0.1,
+    enc_rotary_pos_emb=True,
+    enc_alibi_pos_bias=True,
+    enc_alibi_num_heads=[2,4,6,8][size],
 
     dec_attn_num_mem_kv=[6,12,18,24][size],
     dec_num_memory_tokens=[6,12,18,24][size],
@@ -139,6 +142,9 @@ def get_model(rank, pad_value):
     dec_macaron=True,
     dec_resi_dual=True,
     dec_resi_dual_scale=0.1,
+    dec_rotary_pos_emb=True,
+    dec_alibi_pos_bias=True,
+    dec_alibi_num_heads=[2,4,6,8][size],
   )
 
   if DEVICE == 'cuda':
@@ -155,7 +161,7 @@ def get_model(rank, pad_value):
   elif RAM_SIZE <= 16:
     batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
   elif RAM_SIZE <= 24:
-    batch_size = {"small": 40, "medium": 10, "large": 3, "xl": 1}[MODEL_SIZE]
+    batch_size = {"small": 40, "medium": 8, "large": 3, "xl": 1}[MODEL_SIZE]
   elif RAM_SIZE <= 48:
     batch_size = {"small": 8, "medium": 2, "large": 0, "xl": 0}[MODEL_SIZE]
   elif RAM_SIZE <= 80:
