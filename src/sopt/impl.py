@@ -123,7 +123,7 @@ def get_model(rank, pad_value):
     enc_macaron=True,
     enc_resi_dual=True,
     enc_resi_dual_scale=0.1,
-    enc_rotary_pos_emb=True,
+    #enc_rotary_pos_emb=True,
     enc_alibi_pos_bias=True,
     enc_alibi_num_heads=[2,4,6,8][size],
 
@@ -142,7 +142,7 @@ def get_model(rank, pad_value):
     dec_macaron=True,
     dec_resi_dual=True,
     dec_resi_dual_scale=0.1,
-    dec_rotary_pos_emb=True,
+    #dec_rotary_pos_emb=True,
     dec_alibi_pos_bias=True,
     dec_alibi_num_heads=[2,4,6,8][size],
   )
