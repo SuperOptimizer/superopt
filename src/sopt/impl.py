@@ -270,7 +270,7 @@ def zstd_decompress(data: bytes) -> bytes:
 def gen_yarpgen(uuid):
   print("gen yarpgen")
   ret = []
-  for x in range(1):
+  for x in range(25):
     if uuid == 0 and x % 10 == 0:
       print(x)
     yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c++ -o /{TMP}/yarpgen_{uuid}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -289,7 +289,7 @@ def gen_yarpgen(uuid):
 def gen_csmith(uuid):
   print("gen csmith")
   ret = []
-  for x in range(1):
+  for x in range(25):
     if uuid == 0 and x % 10 == 0:
       print(x)
     csmith = run(f'/{ROOTDIR}/bin/{platform.system()}/csmith --concise --max-funcs 1 --no-safe-math --nomain'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -307,7 +307,7 @@ def gen_ldrgen(uuid):
   #note: expects ocaml frama-c and ldrgen plugin to already be installed
   #frama-c -ldrgen -ldrgen-int-only
   ret = []
-  for x in range(1):
+  for x in range(25):
     if uuid == 0 and x % 10 == 0:
       print(x)
     ldrgen = run(f'/{HOMEDIR}/.opam/4.14.1/bin/frama-c -ldrgen -ldrgen-int-only'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -319,7 +319,7 @@ def gen_ldrgen(uuid):
 def gen_ccg(uuid):
   print("gen ccg")
   ret = []
-  for x in range(1):
+  for x in range(25):
     if uuid == 0 and x % 10 == 0:
       print(x)
     ccg = run(f'/{ROOTDIR}/bin/{platform.system()}/ccg --max-function 1 --max-localvars 4 --max-function-parameters 8 --min-statements-per-block 1 --max-statements-per-block 4 --max-expression-nesting 4 --max-block-nesting 4'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
