@@ -1,7 +1,8 @@
 import multiprocessing
 import shutil
-
+import math
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+import torch.utils.data
 from  subprocess import PIPE, run, Popen
 import os
 import sentencepiece as spm
@@ -10,11 +11,14 @@ import multiprocessing.dummy
 import ast
 import csv
 import gzip
+
+from torch.utils.data import DataLoader
 import base64
 import shutil
 import torch
 import numpy as np
 from x_transformers import XTransformer
+import lightning as L
 
 from util import randstring, flatten, chunkify
 
@@ -56,6 +60,7 @@ DEC_SEQ_LEN = 2048
 GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
+BATCH_SIZE = 1
 
 if torch.cuda.is_available():
   DTYPE = torch.bfloat16 if torch.cuda.get_device_capability()[0] > 7 else torch.float16
@@ -93,62 +98,8 @@ elif platform.system() == 'Darwin':
 
 
 def get_model(rank, pad_value):
-  size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]
 
-  model = XTransformer(
-    dim=[256,512,768,1024][size],
-    pad_value=pad_value,
-    tie_token_emb=True,
-    enc_attn_flash=True,
-    dec_attn_flash=True,
-    return_tgt_loss=True,
-    enc_num_tokens=NUM_TOKENS,
-    enc_depth=[4,8,12,16][size],
-    enc_heads=[4,8,12,16][size],
-    enc_max_seq_len=ENC_SEQ_LEN,
-    dec_num_tokens=NUM_TOKENS,
-    dec_depth=[4,8,12,16][size],
-    dec_heads=[4,8,12,16][size],
-    dec_max_seq_len=DEC_SEQ_LEN,
 
-    enc_attn_num_mem_kv=[6,12,18,24][size],
-    enc_num_memory_tokens=[6,12,18,24][size],
-    enc_use_simple_rmsnorm=True,
-    enc_ff_no_bias=True,
-    enc_ff_swish=True,
-    enc_ff_glu=True,
-    enc_attn_kv_heads=[1,2,3,4][size],
-    enc_attn_gate_values=True,
-    enc_sandwich_coef=[2,4,6,8][size],
-    enc_shift_tokens=1,
-    enc_use_abs_pos_emb=False,
-    enc_attn_on_attn=True,
-    enc_macaron=True,
-    enc_resi_dual=True,
-    enc_resi_dual_scale=0.1,
-    #enc_rotary_pos_emb=True,
-    enc_alibi_pos_bias=True,
-    enc_alibi_num_heads=[2,4,6,8][size],
-
-    dec_attn_num_mem_kv=[6,12,18,24][size],
-    dec_num_memory_tokens=[6,12,18,24][size],
-    dec_use_simple_rmsnorm=True,
-    dec_ff_no_bias=True,
-    dec_ff_swish=True,
-    dec_ff_glu=True,
-    dec_attn_kv_heads=[1,2,3,4][size],
-    dec_attn_gate_values=True,
-    dec_sandwich_coef=[2,4,6,8][size],
-    dec_shift_tokens=1,
-    dec_use_abs_pos_emb=False,
-    dec_attn_on_attn=True,
-    dec_macaron=True,
-    dec_resi_dual=True,
-    dec_resi_dual_scale=0.1,
-    #dec_rotary_pos_emb=True,
-    dec_alibi_pos_bias=True,
-    dec_alibi_num_heads=[2,4,6,8][size],
-  )
 
   if DEVICE == 'cuda':
     model = model.cuda(device=rank)
@@ -319,20 +270,26 @@ def zstd_decompress(data: bytes) -> bytes:
 def gen_yarpgen(uuid):
   print("gen yarpgen")
   ret = []
-  for x in range(100):
+  for x in range(1):
     if uuid == 0 and x % 10 == 0:
       print(x)
     yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c++ -o /{TMP}/yarpgen_{uuid}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
     with open(f'/{TMP}/yarpgen_{uuid}/func.cpp', 'rt') as f:
       prog = f.read()
-    prog = '/*lang=c++*/\n' + prog
+    with open(f'/{TMP}/yarpgen_{uuid}/init.h', 'rt') as f:
+      prog = f.read() + '\n' + prog
+    newprog = ['/*lang=c++*/']
+    for line in prog.split('\n'):
+      if '#include "init.h"' not in line:
+        newprog.append(line)
+    prog = '\n'.join(newprog)
     ret.append(base64.b64encode(prog.encode('utf-8')))
   return ret
 
 def gen_csmith(uuid):
   print("gen csmith")
   ret = []
-  for x in range(100):
+  for x in range(1):
     if uuid == 0 and x % 10 == 0:
       print(x)
     csmith = run(f'/{ROOTDIR}/bin/{platform.system()}/csmith --concise --max-funcs 1 --no-safe-math --nomain'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -350,7 +307,7 @@ def gen_ldrgen(uuid):
   #note: expects ocaml frama-c and ldrgen plugin to already be installed
   #frama-c -ldrgen -ldrgen-int-only
   ret = []
-  for x in range(100):
+  for x in range(1):
     if uuid == 0 and x % 10 == 0:
       print(x)
     ldrgen = run(f'/{HOMEDIR}/.opam/4.14.1/bin/frama-c -ldrgen -ldrgen-int-only'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -362,7 +319,7 @@ def gen_ldrgen(uuid):
 def gen_ccg(uuid):
   print("gen ccg")
   ret = []
-  for x in range(100):
+  for x in range(1):
     if uuid == 0 and x % 10 == 0:
       print(x)
     ccg = run(f'/{ROOTDIR}/bin/{platform.system()}/ccg --max-function 1 --max-localvars 4 --max-function-parameters 8 --min-statements-per-block 1 --max-statements-per-block 4 --max-expression-nesting 4 --max-block-nesting 4'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -392,7 +349,7 @@ def compile(txt_gz):
       clang_unopt_o = f'/{TMP}/{randstring(32)}.o'
       clang_opt_o = f'/{TMP}/{randstring(32)}.o'
 
-      clang = f'{CLANGPP} -xc++ ' if 'lang=c++' in prog else f'{CLANG} -xc '
+      clang = f'{CLANGPP} -xc++ -stdlib=libc++ ' if 'lang=c++' in prog else f'{CLANG} -xc '
       gcc = 'g++ -xc++ ' if 'lang=c++' in prog else 'gcc -xc '
 
       unopt_cc_gcc = Popen(f'{gcc} -o {unopt_o} -O0 {CCFLAGS} -c -include stdint.h -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -534,3 +491,135 @@ def load_checkpoint(model, optim, loss):
     optim.load_state_dict(checkpoint['optimizer_state_dict'])
     loss = checkpoint['loss']
   return model, optim,  loss
+
+
+class SuperOptimizer(L.LightningModule):
+  def __init__(self, size, pad_value):
+    super().__init__()
+    self.learning_rate = LEARNING_RATE
+    size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[size]
+    self.model = XTransformer(
+      dim=[256,512,768,1024][size],
+      pad_value=pad_value,
+      tie_token_emb=True,
+      enc_attn_flash=True,
+      dec_attn_flash=True,
+      return_tgt_loss=True,
+      enc_num_tokens=NUM_TOKENS,
+      enc_depth=[4,8,12,16][size],
+      enc_heads=[4,8,12,16][size],
+      enc_max_seq_len=ENC_SEQ_LEN,
+      dec_num_tokens=NUM_TOKENS,
+      dec_depth=[4,8,12,16][size],
+      dec_heads=[4,8,12,16][size],
+      dec_max_seq_len=DEC_SEQ_LEN,
+
+      enc_attn_num_mem_kv=[6,12,18,24][size],
+      enc_num_memory_tokens=[6,12,18,24][size],
+      enc_use_simple_rmsnorm=True,
+      enc_ff_no_bias=True,
+      enc_ff_swish=True,
+      enc_ff_glu=True,
+      enc_attn_kv_heads=[1,2,3,4][size],
+      enc_attn_gate_values=True,
+      enc_sandwich_coef=[2,4,6,8][size],
+      enc_shift_tokens=1,
+      enc_use_abs_pos_emb=False,
+      enc_attn_on_attn=True,
+      enc_macaron=True,
+      enc_resi_dual=True,
+      enc_resi_dual_scale=0.1,
+      #enc_rotary_pos_emb=True,
+      enc_alibi_pos_bias=True,
+      enc_alibi_num_heads=[2,4,6,8][size],
+
+      dec_attn_num_mem_kv=[6,12,18,24][size],
+      dec_num_memory_tokens=[6,12,18,24][size],
+      dec_use_simple_rmsnorm=True,
+      dec_ff_no_bias=True,
+      dec_ff_swish=True,
+      dec_ff_glu=True,
+      dec_attn_kv_heads=[1,2,3,4][size],
+      dec_attn_gate_values=True,
+      dec_sandwich_coef=[2,4,6,8][size],
+      dec_shift_tokens=1,
+      dec_use_abs_pos_emb=False,
+      dec_attn_on_attn=True,
+      dec_macaron=True,
+      dec_resi_dual=True,
+      dec_resi_dual_scale=0.1,
+      #dec_rotary_pos_emb=True,
+      dec_alibi_pos_bias=True,
+      dec_alibi_num_heads=[2,4,6,8][size])
+
+  def training_step(self, batch, batch_idx):
+    src,mask,tgt = batch
+    loss = self.model(src, tgt, mask=mask)
+    print(loss.item())
+    return loss
+
+  def configure_optimizers(self):
+    optim = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+    return optim
+
+class MyDataset(torch.utils.data.IterableDataset):
+  def __init__(self,path):
+    self.path = path
+
+  def generate(self):
+    worker_info = torch.utils.data.get_worker_info()
+    if worker_info is None:
+      for txtgz in sorted(os.listdir(self.path)):
+        training_data = []
+        print(f"loading {self.path}/{txtgz}")
+        with gzip.open(f'{self.path}/{txtgz}', 'rt') as f:
+          asdf = f.readlines()
+          for entry in chunkify(asdf, 2):
+            unopt = ast.literal_eval(entry[0])
+            opt = ast.literal_eval(entry[1])
+            unopt_tokens = tokenize_sp(unopt)
+            opt_tokens = tokenize_sp(opt)
+            # print(f"len unopt tokens {len(unopt_tokens)} len opt tokens {len(opt_tokens)} len unopt {len(unopt)} len opt {len(opt)}")
+            if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
+              continue
+            opt_tokens.insert(0, tkn_sp('DECSTART'))
+            mask = [True] * len(unopt_tokens)
+            mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
+            unopt_tokens.extend([tkn_sp('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
+            opt_tokens.extend([tkn_sp('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
+            training_data.append([unopt_tokens, opt_tokens, mask])
+        for thing in training_data:
+          mysrc = torch.tensor(thing[0]).long()
+          mytgt = torch.tensor(thing[1]).long()
+          mysrc_mask = torch.tensor(thing[2]).bool()
+          yield mysrc, mysrc_mask, mytgt
+    else:
+      print()
+
+  def __iter__(self):
+    return iter(self.generate())
+
+if __name__ == '__main__':
+  from lightning.pytorch.callbacks import StochasticWeightAveraging
+  from lightning.pytorch.tuner import Tuner
+  devices = torch.cuda.device_count()
+  if '2060' in torch.cuda.get_device_name():
+    precision = "16-mixed"
+  elif 'H100' in torch.cuda.get_device_name():
+    precision = "transformer-engine"
+  else:
+    precision = "bf16-mixed"
+
+
+  model = SuperOptimizer("small",tkn_sp('PAD'))
+  dataset = MyDataset(f'{ROOTDIR}/rawdata')
+  train_loader = DataLoader(dataset, batch_size=2)
+  trainer = L.Trainer(profiler="simple",
+                      fast_dev_run=100,
+                      accelerator="gpu",
+                      devices=devices,
+                      precision=precision,
+                      accumulate_grad_batches=4,
+                      gradient_clip_algorithm="value",
+                      callbacks=[StochasticWeightAveraging(swa_lrs=1e-2)])
+  trainer.fit(model=model, train_dataloaders=train_loader)

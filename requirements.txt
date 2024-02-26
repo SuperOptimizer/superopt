@@ -6,3 +6,6 @@ numpy
 iced-x86
 sentencepiece
 pyelftools
+lightning
+torch
+bitsandbytes
