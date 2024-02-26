@@ -6,6 +6,7 @@ from  subprocess import PIPE, run, Popen
 import os
 import sentencepiece as spm
 import platform
+import multiprocessing.dummy
 import ast
 import csv
 import gzip
@@ -21,7 +22,7 @@ ARCH = 'x86'
 MODEL_SIZE = "medium"
 TOKENIZER = "sentencepiece"
 
-CCFLAGS = '-Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 -xc'
+CCFLAGS = '-Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 '
 
 if torch.cuda.is_available():
   DEVICE = 'cuda'
@@ -38,6 +39,7 @@ else:
   WORLD_SIZE = 1
 
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
+HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 ZSTD_DICTIONARY = f'{ROOTDIR}/misc/zstd_x86_dictionary'
 if TOKENIZER == "char":
@@ -70,6 +72,7 @@ if platform.system() == 'Linux':
   elif ARCH == 'x86':
     GCC = 'gcc'
     CLANG = 'clang-18'
+    CLANGPP = 'clang++-18'
     STRIP = 'strip'
     OBJDUMP = 'objdump'
     OBJCOPY = 'objcopy'
@@ -184,12 +187,11 @@ def tkn_char(t):
 
 def zstd_train():
   os.makedirs(f'/{TMP}/all_objs', exist_ok=True)
-  for db_idx in range(len(os.listdir(f'/{ROOTDIR}/cleandata/')))[:25]:
-    with gzip.open(f'/{ROOTDIR}/cleandata/processed_{db_idx}.csv.gz', 'rt') as f:
-      reader = csv.DictReader(f)
-      for entry in reader:
-        unopt = ast.literal_eval(entry['unopt'])
-        opt = ast.literal_eval(entry['opt'])
+  for txt_gz in os.listdir(f'/{ROOTDIR}/cleandata/')[:1]:
+    with gzip.open(f'/{ROOTDIR}/cleandata/{txt_gz}', 'rt') as f:
+      for entry in chunkify(f.readlines()[:25000],2):
+        unopt = ast.literal_eval(entry[0])
+        opt = ast.literal_eval(entry[1])
         with open(f'/{TMP}/all_objs/{randstring(16)}.o','w+b') as outf:
           outf.write(unopt)
         with open(f'/{TMP}/all_objs/{randstring(16)}.o','w+b') as outf:
@@ -315,24 +317,72 @@ def zstd_decompress(data: bytes) -> bytes:
   return ret.stdout
 
 def gen_yarpgen(uuid):
+  print("gen yarpgen")
   ret = []
   for x in range(100):
     if uuid == 0 and x % 10 == 0:
       print(x)
-    yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c -o /{TMP}/yarpgen_{uuid}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    preprocessed = run(f'{GCC} -E -xc /{TMP}/yarpgen_{uuid}/func.c'.split(),stdin=PIPE,stdout=PIPE,stderr=PIPE)
-    prog = preprocessed.stdout.decode('utf-8')
-    prog = ' '.join(line for line in prog.split('\n') if not line.startswith('#'))
-    ret.append(prog)
+    yarpgen = run(f'/{ROOTDIR}/bin/{platform.system()}/yarpgen --std=c++ -o /{TMP}/yarpgen_{uuid}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    with open(f'/{TMP}/yarpgen_{uuid}/func.cpp', 'rt') as f:
+      prog = f.read()
+    prog = '/*lang=c++*/\n' + prog
+    ret.append(base64.b64encode(prog.encode('utf-8')))
   return ret
 
+def gen_csmith(uuid):
+  print("gen csmith")
+  ret = []
+  for x in range(100):
+    if uuid == 0 and x % 10 == 0:
+      print(x)
+    csmith = run(f'/{ROOTDIR}/bin/{platform.system()}/csmith --concise --max-funcs 1 --no-safe-math --nomain'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    prog = csmith.stdout.decode('utf-8')
+    newprog = ['/*lang=c*/\n']
+    for line in prog.split('\n'):
+      if '#include "csmith.h' not in line:
+        newprog.append(line)
+    prog = '\n'.join(newprog)
+    ret.append(base64.b64encode(prog.encode('utf-8')))
+  return ret
+
+def gen_ldrgen(uuid):
+  print("gen ldrgen")
+  #note: expects ocaml frama-c and ldrgen plugin to already be installed
+  #frama-c -ldrgen -ldrgen-int-only
+  ret = []
+  for x in range(100):
+    if uuid == 0 and x % 10 == 0:
+      print(x)
+    ldrgen = run(f'/{HOMEDIR}/.opam/4.14.1/bin/frama-c -ldrgen -ldrgen-int-only'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    prog = ldrgen.stdout.decode('utf-8')
+    prog = '/*lang=c*/\n'
+    ret.append(base64.b64encode(prog.encode('utf-8')))
+  return ret
+
+def gen_ccg(uuid):
+  print("gen ccg")
+  ret = []
+  for x in range(100):
+    if uuid == 0 and x % 10 == 0:
+      print(x)
+    ccg = run(f'/{ROOTDIR}/bin/{platform.system()}/ccg --max-function 1 --max-localvars 4 --max-function-parameters 8 --min-statements-per-block 1 --max-statements-per-block 4 --max-expression-nesting 4 --max-block-nesting 4'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    prog = ccg.stdout.decode('utf-8')
+    newprog = ['/*lang=c*/\n']
+    for line in prog.split('\n'):
+      if 'int main' in line:
+        break
+      newprog.append(line)
+    prog = '\n'.join(newprog)
+    ret.append(base64.b64encode(prog.encode('utf-8')))
+  return ret
 
 def compile(txt_gz):
   print(f"processing {txt_gz}")
   ret = []
   i = 0
-  with gzip.open(f'/{ROOTDIR}/yarpgen/{txt_gz}', 'rt') as f:
+  with gzip.open(f'/{ROOTDIR}/randomprograms/{txt_gz}', 'rt') as f:
     for prog in f:
+      prog = base64.b64decode(ast.literal_eval(prog)).decode('utf-8')
       i += 1
       print(f"processed {i}")
 
@@ -342,35 +392,38 @@ def compile(txt_gz):
       clang_unopt_o = f'/{TMP}/{randstring(32)}.o'
       clang_opt_o = f'/{TMP}/{randstring(32)}.o'
 
-      unopt_cc_gcc = Popen(f'{GCC} -o {unopt_o} -O0 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      opt_cc_gcc = Popen(f'{GCC} -o {opt_o} -O3 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      unopt_cc_clang = Popen(f'{CLANG} -o {clang_unopt_o} -O0 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-      opt_cc_clang = Popen(f'{CLANG} -o {clang_opt_o} -O3 {CCFLAGS} -xc -c -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      clang = f'{CLANGPP} -xc++ ' if 'lang=c++' in prog else f'{CLANG} -xc '
+      gcc = 'g++ -xc++ ' if 'lang=c++' in prog else 'gcc -xc '
 
-      unopt_cc_gcc.communicate(prog.encode('utf-8'))
-      opt_cc_gcc.communicate(prog.encode('utf-8'))
-      unopt_cc_clang.communicate(prog.encode('utf-8'))
-      opt_cc_clang.communicate(prog.encode('utf-8'))
+      unopt_cc_gcc = Popen(f'{gcc} -o {unopt_o} -O0 {CCFLAGS} -c -include stdint.h -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_cc_gcc = Popen(f'{gcc} -o {opt_o} -O3 {CCFLAGS} -c -include stdint.h -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      unopt_cc_clang = Popen(f'{clang} -o {clang_unopt_o} -O0 {CCFLAGS}  -c -include stdint.h -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+      opt_cc_clang = Popen(f'{clang} -o {clang_opt_o} -O3 {CCFLAGS}  -c -include stdint.h -'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+
+      out1,err1 = unopt_cc_gcc.communicate(prog.encode('utf-8'))
+      out2,err2 = opt_cc_gcc.communicate(prog.encode('utf-8'))
+      out3,err3 = unopt_cc_clang.communicate(prog.encode('utf-8'))
+      out4,err4 = opt_cc_clang.communicate(prog.encode('utf-8'))
 
       unopt_strip_gcc = Popen(f'{STRIP} {unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
       opt_strip_gcc = Popen(f'{STRIP} {opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
       unopt_strip_clang = Popen(f'{STRIP} {clang_unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
       opt_strip_clang = Popen(f'{STRIP} {clang_opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
-      unopt_strip_gcc.communicate()
-      opt_strip_gcc.communicate()
-      unopt_strip_clang.communicate()
-      opt_strip_clang.communicate()
+      out5,err5 = unopt_strip_gcc.communicate()
+      out6,err6 = opt_strip_gcc.communicate()
+      out7,err7 = unopt_strip_clang.communicate()
+      out8,err8 = opt_strip_clang.communicate()
 
       unopt_objcopy_gcc = Popen(f'{OBJCOPY} --remove-section .comment {unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
       opt_objcopy_gcc = Popen(f'{OBJCOPY} --remove-section .comment {opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
       unopt_objcopy_clang = Popen(f'{OBJCOPY} --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {clang_unopt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
       opt_objcopy_clang = Popen(f'{OBJCOPY} --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {clang_opt_o}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
-      unopt_objcopy_gcc.communicate()
-      opt_objcopy_gcc.communicate()
-      unopt_objcopy_clang.communicate()
-      opt_objcopy_clang.communicate()
+      out9,err9 = unopt_objcopy_gcc.communicate()
+      out10,err10 = opt_objcopy_gcc.communicate()
+      out11,err11 = unopt_objcopy_clang.communicate()
+      out12,err12 = opt_objcopy_clang.communicate()
 
       with open(unopt_o, 'rb') as f:
         unopt_gcc = f.read()
@@ -390,8 +443,7 @@ def compile(txt_gz):
       if len(unopt_clang) > 50000 or len(opt_clang) > 50000:
         print(f"skipping too long prog {len(unopt_clang)} {len(opt_clang)}")
       else:
-        if not (unopt_clang == unopt_gcc and opt_clang == opt_gcc):
-          ret.append({'unopt':unopt_clang, 'opt': opt_clang})
+        ret.append({'unopt':unopt_clang, 'opt': opt_clang})
 
       os.remove(unopt_o)
       os.remove(opt_o)
@@ -400,9 +452,9 @@ def compile(txt_gz):
   return txt_gz, ret
 
 
-def generate_yarpgen():
-  print("generating yarpgen")
-  n_preexisting = len(os.listdir(f'{ROOTDIR}/yarpgen/'))
+def generate_random_code():
+  print("generating random code db")
+  n_preexisting = len(os.listdir(f'{ROOTDIR}/randomcode/'))
   ncpu = multiprocessing.cpu_count()
   for uuid in range(ncpu):
     os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
@@ -410,20 +462,39 @@ def generate_yarpgen():
     print('processed', x)
     with multiprocessing.Pool(ncpu) as p:
       ret = p.map(gen_yarpgen, list(range(ncpu)))
-    with gzip.open(f'{ROOTDIR}/yarpgen/{x + n_preexisting}.txt.gz', 'w+t') as outf:
+    with gzip.open(f'{ROOTDIR}/randomprograms/{x + n_preexisting}.txt.gz', 'w+t') as outf:
       for line in flatten(ret):
         outf.write(line + '\n')
+
+
+def generate_yarpgen():
+  print("generating randomprograms")
+  n_preexisting = len(os.listdir(f'{ROOTDIR}/randomprograms/'))
+  ncpu = multiprocessing.cpu_count()
+  for uuid in range(ncpu):
+    os.makedirs(f'{TMP}/yarpgen_{uuid}', exist_ok=True)
+  for x in range(100):
+    print('processed', x)
+    with multiprocessing.Pool(ncpu) as p:
+      yarpret = p.map(gen_yarpgen, list(range(ncpu)))
+      ccgpret = p.map(gen_ccg, list(range(ncpu)))
+      csmithret = p.map(gen_csmith, list(range(ncpu)))
+      ldrgenret = p.map(gen_ldrgen, list(range(ncpu)))
+    with gzip.open(f'{ROOTDIR}/randomprograms/{x + n_preexisting}.txt.gz', 'w+t') as outf:
+      print(f"writing {ROOTDIR}/randomprograms/{x + n_preexisting}.txt.gz")
+      for line in flatten(ccgpret) + flatten(csmithret) + flatten(yarpret) + flatten(ldrgenret):
+        outf.write(str(line) + '\n')
 
 def compile_yarpgen():
   ncpu = multiprocessing.cpu_count()
   preexisting = os.listdir(f'{ROOTDIR}/rawdata/')
   os.makedirs(f'{ROOTDIR}/rawdata', exist_ok=True)
   args = []
-  for txt_gz in sorted(os.listdir(f'{ROOTDIR}/yarpgen')):
+  for txt_gz in sorted(os.listdir(f'{ROOTDIR}/randomprograms')):
     if txt_gz not in preexisting:
       args.append(txt_gz)
   for chunk in chunkify(args,ncpu):
-    with multiprocessing.Pool(ncpu) as p:
+    with multiprocessing.dummy.Pool(ncpu) as p:
       for ret in p.map(compile, chunk):
         idx,listings = ret
         with gzip.open(f'{ROOTDIR}/rawdata/{idx}', 'wt') as outf:
@@ -444,14 +515,6 @@ def clean_yarpgen():
         all_programs.add(h)
         outf.write(unopt)
         outf.write(opt)
-      #reader = csv.DictReader(inf)
-      #writer = csv.DictWriter(outf, ['unopt','opt'])
-      #for row in reader:
-      #  if (h := hash(row['unopt'])) in all_programs:
-      #    continue
-      #  all_programs.add(h)
-      #  writer.writerow(row)
-      #  print()
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
   if DEVICE == 'cuda':

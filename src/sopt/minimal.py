@@ -126,12 +126,12 @@ if __name__ == '__main__':
     print("defaulting to train")
     sys.argv.append("gen")
   #sentencepiece_train()
-  #zstd_train()
+  #zdstd_train()
   #if sys.argv[1] == 'train':
-  main()
+  #main()
   #elif sys.argv[1] == 'gen':
   #generate_yarpgen()
-  #compile_yarpgen()
+  compile_yarpgen()
   #clean_yarpgen()
   #elif sys.argv[1] == 'infer':
   #  pass
