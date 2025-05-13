@@ -10,6 +10,15 @@ import torchao
 
 from torchao.float8 import convert_to_float8_training
 
+import torch
+import torch.nn as nn
+from torch.nn import Transformer
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from transformers import T5ForConditionalGeneration, T5Config
+
 ARCH = 'x86'
 MODEL_SIZE = "small"
 
@@ -29,7 +38,7 @@ NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
 
 ENC_SEQ_LEN = 4096
 DEC_SEQ_LEN = 4096
-GENERATE_EVERY = 100
+GENERATE_EVERY = 10
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
@@ -43,51 +52,6 @@ CLANGPP = 'clang++'
 STRIP = 'strip'
 OBJDUMP = 'objdump'
 OBJCOPY = 'objcopy'
-
-
-# Add this before the backward pass
-def debug_all_tensors(model, loss):
-  """Extensive debugging of all tensors participating in the computation graph"""
-  print("\nDEBUGGING ALL TENSORS IN MODEL")
-
-  # Check all parameters
-  for name, param in model.named_parameters():
-    if param.requires_grad:
-      print(f"Parameter {name}: shape={param.shape}")
-
-      # Check if any dimension is 4095
-      if any(dim == 4095 for dim in param.shape):
-        print(f"  *** SUSPICIOUS DIMENSION 4095 FOUND IN {name} ***")
-
-  # Try to trace the computation graph
-  if hasattr(loss, 'grad_fn'):
-    def trace_graph(grad_fn, depth=0, visited=None):
-      if visited is None:
-        visited = set()
-
-      if grad_fn in visited:
-        return
-
-      visited.add(grad_fn)
-
-      # Print info about this node
-      print(f"{'  ' * depth}Node: {type(grad_fn).__name__}")
-
-      # Capture any tensors with size 4095
-      if hasattr(grad_fn, 'saved_tensors'):
-        for i, tensor in enumerate(grad_fn.saved_tensors):
-          if any(dim == 4095 for dim in tensor.shape):
-            print(f"{'  ' * depth}  *** SUSPICIOUS TENSOR at index {i}: {tensor.shape} ***")
-
-      # Continue traversing
-      if hasattr(grad_fn, 'next_functions'):
-        for fn in grad_fn.next_functions:
-          if fn[0] is not None:
-            trace_graph(fn[0], depth + 1, visited)
-
-    trace_graph(loss.grad_fn)
-
-
 
 def get_model(pad_value):
   size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]

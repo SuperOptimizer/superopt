@@ -12,7 +12,7 @@ import torchao
 
 
 from impl import (
-  save_checkpoint, load_checkpoint, get_model, tokenize, detokenize, tkn, gen_yarpgen, debug_all_tensors,
+  save_checkpoint, load_checkpoint, get_model, tokenize, detokenize, tkn, gen_yarpgen,
   DTYPE, DEVICE, GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 
