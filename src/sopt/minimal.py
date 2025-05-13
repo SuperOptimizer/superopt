@@ -7,11 +7,12 @@ import torch
 import random
 import tqdm
 import sentencepiece as spm
+import torchao
 
 
 
 from impl import (
-  save_checkpoint, load_checkpoint, get_model, tokenize, detokenize, tkn, gen_yarpgen,
+  save_checkpoint, load_checkpoint, get_model, tokenize, detokenize, tkn, gen_yarpgen, debug_all_tensors,
   DTYPE, DEVICE, GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 
@@ -81,8 +82,9 @@ def train():
 
   model = get_model(tkn('PAD'))
   report_model_size(model)
-  optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-  scaler = torch.cuda.amp.GradScaler()
+  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
+  #optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+  scaler = torch.amp.GradScaler('cuda')
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
   model, optim, loss = load_checkpoint(model, optim, 0)
 

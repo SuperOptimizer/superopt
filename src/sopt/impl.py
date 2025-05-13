@@ -5,7 +5,10 @@ import sentencepiece as spm
 import platform
 import torch
 from x_transformers import XTransformer
+import x_transformers
+import torchao
 
+from torchao.float8 import convert_to_float8_training
 
 ARCH = 'x86'
 MODEL_SIZE = "small"
@@ -20,13 +23,13 @@ HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 
 #vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
-NUM_VOCAB_TOKENS = 4096
+NUM_VOCAB_TOKENS = 4094
 NUM_SPECIAL_TOKENS = 2
 NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
 
 ENC_SEQ_LEN = 4096
 DEC_SEQ_LEN = 4096
-GENERATE_EVERY = 10
+GENERATE_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
@@ -42,6 +45,49 @@ OBJDUMP = 'objdump'
 OBJCOPY = 'objcopy'
 
 
+# Add this before the backward pass
+def debug_all_tensors(model, loss):
+  """Extensive debugging of all tensors participating in the computation graph"""
+  print("\nDEBUGGING ALL TENSORS IN MODEL")
+
+  # Check all parameters
+  for name, param in model.named_parameters():
+    if param.requires_grad:
+      print(f"Parameter {name}: shape={param.shape}")
+
+      # Check if any dimension is 4095
+      if any(dim == 4095 for dim in param.shape):
+        print(f"  *** SUSPICIOUS DIMENSION 4095 FOUND IN {name} ***")
+
+  # Try to trace the computation graph
+  if hasattr(loss, 'grad_fn'):
+    def trace_graph(grad_fn, depth=0, visited=None):
+      if visited is None:
+        visited = set()
+
+      if grad_fn in visited:
+        return
+
+      visited.add(grad_fn)
+
+      # Print info about this node
+      print(f"{'  ' * depth}Node: {type(grad_fn).__name__}")
+
+      # Capture any tensors with size 4095
+      if hasattr(grad_fn, 'saved_tensors'):
+        for i, tensor in enumerate(grad_fn.saved_tensors):
+          if any(dim == 4095 for dim in tensor.shape):
+            print(f"{'  ' * depth}  *** SUSPICIOUS TENSOR at index {i}: {tensor.shape} ***")
+
+      # Continue traversing
+      if hasattr(grad_fn, 'next_functions'):
+        for fn in grad_fn.next_functions:
+          if fn[0] is not None:
+            trace_graph(fn[0], depth + 1, visited)
+
+    trace_graph(loss.grad_fn)
+
+
 
 def get_model(pad_value):
   size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]
@@ -53,20 +99,20 @@ def get_model(pad_value):
     dec_attn_flash=True,
     return_tgt_loss=True,
     enc_num_tokens=NUM_TOKENS,
-    enc_depth=[4, 8, 12, 16][size],
-    enc_heads=[4, 8, 12, 16][size],
+    enc_depth=4,
+    enc_heads=4,
     enc_max_seq_len=ENC_SEQ_LEN,
     dec_num_tokens=NUM_TOKENS,
-    dec_depth=[4, 8, 12, 16][size],
-    dec_heads=[4, 8, 12, 16][size],
+    dec_depth=4,
+    dec_heads=4,
     dec_max_seq_len=DEC_SEQ_LEN,
 
     #enc_attn_num_mem_kv=[6, 12, 18, 24][size],
     #enc_num_memory_tokens=[6, 12, 18, 24][size],
-    enc_use_simple_rmsnorm=True,
-    enc_ff_no_bias=True,
-    enc_ff_swish=True,
-    enc_ff_glu=True,
+    #enc_use_simple_rmsnorm=True,
+    #enc_ff_no_bias=True,
+    #enc_ff_swish=True,
+    #enc_ff_glu=True,
     #enc_attn_kv_heads=[1, 2, 3, 4][size],
     #enc_attn_gate_values=True,
     #enc_sandwich_coef=[2, 4, 6, 8][size],
@@ -80,10 +126,10 @@ def get_model(pad_value):
 
     #dec_attn_num_mem_kv=[6, 12, 18, 24][size],
     #dec_num_memory_tokens=[6, 12, 18, 24][size],
-    dec_use_simple_rmsnorm=True,
-    dec_ff_no_bias=True,
-    dec_ff_swish=True,
-    dec_ff_glu=True,
+    #dec_use_simple_rmsnorm=True,
+    #dec_ff_no_bias=True,
+    #dec_ff_swish=True,
+    #dec_ff_glu=True,
     #dec_attn_kv_heads=[1, 2, 3, 4][size],
     #dec_attn_gate_values=False,
     #dec_sandwich_coef=[2, 4, 6, 8][size],
@@ -95,6 +141,7 @@ def get_model(pad_value):
     #dec_alibi_pos_bias=False,
     #dec_alibi_num_heads=[2, 4, 6, 8][size])
   )
+
 
   model = model.cuda()
   #model = torch.compile(model)
@@ -140,8 +187,6 @@ def gen_yarpgen(threadnum, num):
   unopt_obj = f'{outdir}/func.unopt.o'
 
   for x in range(num):
-    if threadnum == 0:
-      print(x)
 
     ret = run(f'{yarpgen} --std=c -o {outdir}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
     if ret.returncode != 0:
