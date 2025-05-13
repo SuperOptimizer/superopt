@@ -4,7 +4,6 @@ import torch
 import random
 import string
 import numpy as np
-import itertools
 
 
 def chunkify(l, n):
