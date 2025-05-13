@@ -108,8 +108,7 @@ def get_model(pad_value):
 
 
   model = model.cuda()
-  #model = torch.compile(model)
-
+  model = torch.compile(model)
   return model
 
 # our tokenization scheme is
@@ -121,6 +120,11 @@ def bytes_to_hex_string(arr: bytes):
 
 def hex_string_to_bytes(hex_string):
   try:
+    return bytes.fromhex(hex_string)
+  except:
+    print("got an invalid hex string in hex_string_to_bytes")
+  try:
+    hex_string.pop()
     return bytes.fromhex(hex_string)
   except:
     return b"invalid"
