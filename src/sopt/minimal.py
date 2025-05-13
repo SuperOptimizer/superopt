@@ -6,6 +6,7 @@ import gzip
 import torch
 import random
 import tqdm
+import sentencepiece as spm
 
 
 
@@ -15,13 +16,18 @@ from impl import (
 from util import report_cuda_size, timeit, report_model_size, chunkify
 
 #todo: batch_size > 1
-def yarpgen_and_cycle():
-  unopt,opt = gen_yarpgen(0,1)[0]
-  unopt_tokens = tokenize(unopt)
-  opt_tokens = tokenize(opt)
-  if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
-    #try again
-    pass
+def yarpgen_and_cycle(sp_encoder, sp_decoder):
+  done = False
+  while not done:
+    unopt,opt = list(gen_yarpgen(0,1))[0]
+    unopt_tokens = tokenize(sp_encoder, unopt)
+    opt_tokens = tokenize(sp_decoder, opt)
+    if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
+      print("skipping...")
+      #try again
+      pass
+    else:
+      done = True
   opt_tokens.insert(0, tkn('DECSTART'))
   mask = [True] * len(unopt_tokens)
   mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
@@ -70,8 +76,10 @@ def cycle(batch_size, training_data, txts):
 
 @timeit
 def train():
+  sp_encoder = spm.SentencePieceProcessor(model_file=f'{ROOTDIR}/misc/encoder.model')
+  sp_decoder = spm.SentencePieceProcessor(model_file=f'{ROOTDIR}/misc/decoder.model')
 
-  model, batch_size = get_model(tkn('PAD'))
+  model = get_model(tkn('PAD'))
   report_model_size(model)
   optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
   scaler = torch.cuda.amp.GradScaler()
@@ -81,8 +89,8 @@ def train():
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
-    src, src_mask, tgt = yarpgen_and_cycle()
-    with torch.cuda.amp.autocast(dtype=DTYPE):
+    src, src_mask, tgt = yarpgen_and_cycle(sp_encoder, sp_decoder)
+    with torch.amp.autocast('cuda', dtype=DTYPE):
       loss = model(src, tgt, mask=src_mask)
     scaler.scale(loss).backward()
     scaler.step(optim)
@@ -97,19 +105,19 @@ def train():
         if i > 0:
           save_checkpoint(model,  optim, loss, scaler, scheduler)
         model.eval()
-        src, src_mask, tgt = yarpgen_and_cycle()
+        src, src_mask, tgt = yarpgen_and_cycle(sp_encoder, sp_decoder)
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
         start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
         print_stmt = ""
-        print_stmt += f"\ninput tokenized:  \n{detokenize(src.tolist()[0])} \n"
-        print_stmt += f"\npredicted detokenized:  \n{detokenize(sample.tolist())}\n"
-        print_stmt += f"\nactual detokenized:     \n{detokenize(tgt.tolist()[0])}\n"
+        print_stmt += f"\ninput tokenized:  \n{detokenize(sp_encoder, src.tolist()[0])} \n"
+        print_stmt += f"\npredicted detokenized:  \n{detokenize(sp_decoder, sample.tolist())}\n"
+        print_stmt += f"\nactual detokenized:     \n{detokenize(sp_decoder, tgt.tolist()[0])}\n"
         print(print_stmt)
 
 
 def main():
-    train(0)
+    train()
 
 if __name__ == '__main__':
   main()

@@ -18,7 +18,11 @@ RAM_SIZE = torch.cuda.get_device_properties(DEVICE).total_memory // 1024 // 1024
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
-NUM_TOKENS = 8192 + 2
+
+#vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
+NUM_VOCAB_TOKENS = 4096
+NUM_SPECIAL_TOKENS = 2
+NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
 
 ENC_SEQ_LEN = 2048
 DEC_SEQ_LEN = 2048
@@ -57,46 +61,43 @@ def get_model(pad_value):
     dec_heads=[4, 8, 12, 16][size],
     dec_max_seq_len=DEC_SEQ_LEN,
 
-    enc_attn_num_mem_kv=[6, 12, 18, 24][size],
-    enc_num_memory_tokens=[6, 12, 18, 24][size],
+    #enc_attn_num_mem_kv=[6, 12, 18, 24][size],
+    #enc_num_memory_tokens=[6, 12, 18, 24][size],
     enc_use_simple_rmsnorm=True,
     enc_ff_no_bias=True,
     enc_ff_swish=True,
     enc_ff_glu=True,
-    enc_attn_kv_heads=[1, 2, 3, 4][size],
-    enc_attn_gate_values=True,
-    enc_sandwich_coef=[2, 4, 6, 8][size],
-    enc_shift_tokens=1,
-    enc_use_abs_pos_emb=False,
-    enc_attn_on_attn=True,
-    enc_macaron=True,
-    enc_resi_dual=True,
-    enc_resi_dual_scale=0.1,
+    #enc_attn_kv_heads=[1, 2, 3, 4][size],
+    #enc_attn_gate_values=True,
+    #enc_sandwich_coef=[2, 4, 6, 8][size],
+    #enc_shift_tokens=1,
+    #enc_use_abs_pos_emb=False,
+    #enc_attn_on_attn=True,
+    #enc_macaron=True,
     # enc_rotary_pos_emb=True,
-    enc_alibi_pos_bias=True,
-    enc_alibi_num_heads=[2, 4, 6, 8][size],
+    #enc_alibi_pos_bias=True,
+    #enc_alibi_num_heads=[2, 4, 6, 8][size],
 
-    dec_attn_num_mem_kv=[6, 12, 18, 24][size],
-    dec_num_memory_tokens=[6, 12, 18, 24][size],
+    #dec_attn_num_mem_kv=[6, 12, 18, 24][size],
+    #dec_num_memory_tokens=[6, 12, 18, 24][size],
     dec_use_simple_rmsnorm=True,
     dec_ff_no_bias=True,
     dec_ff_swish=True,
     dec_ff_glu=True,
-    dec_attn_kv_heads=[1, 2, 3, 4][size],
-    dec_attn_gate_values=True,
-    dec_sandwich_coef=[2, 4, 6, 8][size],
-    dec_shift_tokens=1,
-    dec_use_abs_pos_emb=False,
-    dec_attn_on_attn=True,
-    dec_macaron=True,
-    dec_resi_dual=True,
-    dec_resi_dual_scale=0.1,
+    #dec_attn_kv_heads=[1, 2, 3, 4][size],
+    #dec_attn_gate_values=False,
+    #dec_sandwich_coef=[2, 4, 6, 8][size],
+    #dec_shift_tokens=1,
+    #dec_use_abs_pos_emb=False,
+    #dec_attn_on_attn=False,
+    #dec_macaron=False,
     # dec_rotary_pos_emb=True,
-    dec_alibi_pos_bias=True,
-    dec_alibi_num_heads=[2, 4, 6, 8][size])
+    #dec_alibi_pos_bias=False,
+    #dec_alibi_num_heads=[2, 4, 6, 8][size])
+  )
 
   model = model.cuda()
-  model = torch.compile(model)
+  #model = torch.compile(model)
 
   return model
 
@@ -111,14 +112,18 @@ def hex_string_to_bytes(hex_string):
   return bytes.fromhex(hex_string)
 
 def tkn(str):
-  pass
+  if str == 'PAD':
+    return NUM_VOCAB_TOKENS + 0
+  elif str == 'DECSTART':
+    return NUM_VOCAB_TOKENS + 1
+  raise
 
 def tokenize(sp, data: bytes):
   tokens = sp.encode(bytes_to_hex_string(data))
   return tokens
 
 def detokenize(sp, tokens: [int]):
-  tokens = [t for t in tokens if t < NUM_TOKENS-2]
+  tokens = [t for t in tokens if t < NUM_VOCAB_TOKENS]
   hexstr = sp.decode(tokens)
   return hex_string_to_bytes(hexstr)
 
@@ -157,7 +162,7 @@ def gen_yarpgen(threadnum, num):
 
 def gen_sentencepiece_training_data():
   os.makedirs(TMP, exist_ok=True)
-  progs = gen_yarpgen(0,1000)
+  progs = gen_yarpgen(0,2000)
 
   encoder_corpus = f"{TMP}/encoder.txt"
   decoder_corpus = f"{TMP}/decoder.txt"
@@ -168,8 +173,8 @@ def gen_sentencepiece_training_data():
       f.write(bytes_to_hex_string(unopt) + "\n")
       g.write(bytes_to_hex_string(opt) + "\n")
   #spm_train --input=encoder.txt --model_prefix=encoder --vocab_size=4096 --max_sentence_length=655350 --character_coverage=1.0 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false
-  run(f"spm_train --input={encoder_corpus} --model_prefix=encoder --vocab_size=8192 --character_coverage=1.0 --model_type=unigram --max_sentence_length=65535 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false".split(), stdin=PIPE, stdout=PIPE, stderr=PIPE,cwd=TMP)
-  run(f"spm_train --input={decoder_corpus} --model_prefix=decoder --vocab_size=8192 --character_coverage=1.0 --model_type=unigram --max_sentence_length=65535 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false".split(), stdin=PIPE, stdout=PIPE, stderr=PIPE,cwd=TMP)
+  #run(f"spm_train --input={encoder_corpus} --model_prefix=encoder --vocab_size=8192 --character_coverage=1.0 --model_type=unigram --max_sentence_length=65535 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false".split(), stdin=PIPE, stdout=PIPE, stderr=PIPE,cwd=TMP)
+  #run(f"spm_train --input={decoder_corpus} --model_prefix=decoder --vocab_size=8192 --character_coverage=1.0 --model_type=unigram --max_sentence_length=65535 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false".split(), stdin=PIPE, stdout=PIPE, stderr=PIPE,cwd=TMP)
 
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
@@ -190,4 +195,4 @@ def load_checkpoint(model, optim, loss):
     loss = checkpoint['loss']
   return model, optim,  loss
 
-gen_sentencepiece_training_data()
+#gen_sentencepiece_training_data()
