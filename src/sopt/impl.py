@@ -31,8 +31,8 @@ DTYPE = torch.bfloat16
 CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}-{MODEL_SIZE}.pt'
 
 GCC = 'gcc'
-CLANG = 'clang-18'
-CLANGPP = 'clang++-18'
+CLANG = 'clang'
+CLANGPP = 'clang++'
 STRIP = 'strip'
 OBJDUMP = 'objdump'
 OBJCOPY = 'objcopy'
@@ -100,22 +100,30 @@ def get_model(pad_value):
 
   return model
 
+# our tokenization scheme is
+# byte -> [0-9A-F][0-9A-F]
+# where each byte in the stream is mapped to the high,low nibble text hex representation
+# this then gets fed into sentencepiece for the final vocab
+def bytes_to_hex_string(arr: bytes):
+  return arr.hex().upper()
+
+def hex_string_to_bytes(hex_string):
+  return bytes.fromhex(hex_string)
+
 def tkn(str):
   pass
 
 def tokenize(sp, data: bytes):
-  tokens = sp.encode(data)
+  tokens = sp.encode(bytes_to_hex_string(data))
   return tokens
 
 def detokenize(sp, tokens: [int]):
   tokens = [t for t in tokens if t < NUM_TOKENS-2]
-  tokens = sp.decode(tokens)
-  return tokens
+  hexstr = sp.decode(tokens)
+  return hex_string_to_bytes(hexstr)
 
 
 def gen_yarpgen(threadnum, num):
-  ret = []
-
   yarpgen = f'/{ROOTDIR}/bin/{platform.system()}/yarpgen'
   outdir = f'/{TMP}/yarpgen_{threadnum}'
   os.makedirs(outdir, exist_ok=True)
@@ -127,15 +135,41 @@ def gen_yarpgen(threadnum, num):
     if threadnum == 0:
       print(x)
 
-    run(f'{yarpgen} --std=c -o {outdir}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    run(f'clang -c {c_file} -o {unopt_obj} -include stdint.h -O0 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    run(f'clang -c {c_file} -o {opt_obj}   -include stdint.h -O3 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    run(f'{OBJCOPY}  --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {unopt_obj}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    run(f'{OBJCOPY}  --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {opt_obj}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    with open(opt_obj, 'rb') as f, open(unopt_obj, 'rb') as g:
-      ret.append((f.read(),g.read()))
+    ret = run(f'{yarpgen} --std=c -o {outdir}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    if ret.returncode != 0:
+      raise
+    ret = run(f'clang -c {c_file} -o {unopt_obj} -include stdint.h -O0 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    if ret.returncode != 0:
+      raise
+    ret = run(f'clang -c {c_file} -o {opt_obj}   -include stdint.h -O3 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    if ret.returncode != 0:
+      raise
+    ret = run(f'{OBJCOPY}  --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {unopt_obj}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    if ret.returncode != 0:
+      raise
+    ret = run(f'{OBJCOPY}  --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {opt_obj}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    if ret.returncode != 0:
+      raise
+    with open(unopt_obj, 'rb') as f, open(opt_obj, 'rb') as g:
+      ret=(f.read(),g.read())
+      yield ret
 
-  return ret
+
+def gen_sentencepiece_training_data():
+  os.makedirs(TMP, exist_ok=True)
+  progs = gen_yarpgen(0,1000)
+
+  encoder_corpus = f"{TMP}/encoder.txt"
+  decoder_corpus = f"{TMP}/decoder.txt"
+
+  with open(encoder_corpus, 'at') as f, open(decoder_corpus, 'at') as g:
+    for pair in progs:
+      unopt,opt = pair
+      f.write(bytes_to_hex_string(unopt) + "\n")
+      g.write(bytes_to_hex_string(opt) + "\n")
+  #spm_train --input=encoder.txt --model_prefix=encoder --vocab_size=4096 --max_sentence_length=655350 --character_coverage=1.0 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false
+  run(f"spm_train --input={encoder_corpus} --model_prefix=encoder --vocab_size=8192 --character_coverage=1.0 --model_type=unigram --max_sentence_length=655350 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false".split(), stdin=PIPE, stdout=PIPE, stderr=PIPE,cwd=TMP)
+  run(f"spm_train --input={decoder_corpus} --model_prefix=decoder --vocab_size=8192 --character_coverage=1.0 --model_type=unigram --max_sentence_length=655350 --bos_id=-1 --eos_id=-1 --pad_id=-1  --add_dummy_prefix=false --split_by_number=false".split(), stdin=PIPE, stdout=PIPE, stderr=PIPE,cwd=TMP)
 
 
 def save_checkpoint(model,  optim, loss, scaler, scheduler):
@@ -155,3 +189,5 @@ def load_checkpoint(model, optim, loss):
     optim.load_state_dict(checkpoint['optimizer_state_dict'])
     loss = checkpoint['loss']
   return model, optim,  loss
+
+gen_sentencepiece_training_data()
