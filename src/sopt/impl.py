@@ -24,9 +24,9 @@ NUM_VOCAB_TOKENS = 4096
 NUM_SPECIAL_TOKENS = 2
 NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = 2048
-DEC_SEQ_LEN = 2048
-GENERATE_EVERY = 1000
+ENC_SEQ_LEN = 4096
+DEC_SEQ_LEN = 4096
+GENERATE_EVERY = 10
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
@@ -109,7 +109,10 @@ def bytes_to_hex_string(arr: bytes):
   return arr.hex().upper()
 
 def hex_string_to_bytes(hex_string):
-  return bytes.fromhex(hex_string)
+  try:
+    return bytes.fromhex(hex_string)
+  except:
+    return b"invalid"
 
 def tkn(str):
   if str == 'PAD':
