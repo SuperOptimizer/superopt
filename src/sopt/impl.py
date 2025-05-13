@@ -7,7 +7,7 @@ import torch
 from x_transformers import XTransformer
 import x_transformers
 import torchao
-
+import gzip
 from torchao.float8 import convert_to_float8_training
 
 import torch
@@ -38,7 +38,7 @@ NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
 
 ENC_SEQ_LEN = 4096
 DEC_SEQ_LEN = 4096
-GENERATE_EVERY = 10
+GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
@@ -132,15 +132,23 @@ def tkn(str):
     return NUM_VOCAB_TOKENS + 1
   raise
 
-def tokenize(sp, data: bytes):
+def tokenize_bytes(sp, data: bytes):
   tokens = sp.encode(bytes_to_hex_string(data))
   return tokens
 
-def detokenize(sp, tokens: [int]):
+def detokenize_bytes(sp, tokens: [int]):
   tokens = [t for t in tokens if t < NUM_VOCAB_TOKENS]
   hexstr = sp.decode(tokens)
   return hex_string_to_bytes(hexstr)
 
+def tokenize_hexstr(sp, data: str):
+  tokens = sp.encode(data)
+  return tokens
+
+def detokenize_hexstr(sp, tokens: [int]):
+  tokens = [t for t in tokens if t < NUM_VOCAB_TOKENS]
+  hexstr = sp.decode(tokens)
+  return hexstr
 
 def gen_yarpgen(threadnum, num):
   yarpgen = f'/{ROOTDIR}/bin/{platform.system()}/yarpgen'
@@ -151,7 +159,7 @@ def gen_yarpgen(threadnum, num):
   unopt_obj = f'{outdir}/func.unopt.o'
 
   for x in range(num):
-
+    print(x)
     ret = run(f'{yarpgen} --std=c -o {outdir}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
     if ret.returncode != 0:
       raise
@@ -171,6 +179,18 @@ def gen_yarpgen(threadnum, num):
       ret=(f.read(),g.read())
       yield ret
 
+def gen_model_training_data():
+  os.makedirs(TMP, exist_ok=True)
+  progs = gen_yarpgen(0, 2000)
+
+  encoder_corpus = f"{TMP}/encoder.txt.gzip"
+  decoder_corpus = f"{TMP}/decoder.txt.gzip"
+
+  with gzip.open(encoder_corpus, 'at') as f, gzip.open(decoder_corpus, 'at') as g:
+    for pair in progs:
+      unopt, opt = pair
+      f.write(bytes_to_hex_string(unopt) + "\n")
+      g.write(bytes_to_hex_string(opt) + "\n")
 
 def gen_sentencepiece_training_data():
   os.makedirs(TMP, exist_ok=True)
@@ -207,4 +227,57 @@ def load_checkpoint(model, optim, loss):
     loss = checkpoint['loss']
   return model, optim,  loss
 
+
+def gen_model_training_data_parallel():
+  import concurrent.futures
+  import multiprocessing
+
+  # Determine available CPU threads
+  num_threads = multiprocessing.cpu_count()
+
+  # Total programs to generate
+  total_programs = 20000
+
+  # Split workload across threads
+  programs_per_thread = total_programs // num_threads
+  remainder = total_programs % num_threads
+
+  os.makedirs(TMP, exist_ok=True)
+
+  # Function to generate programs for a specific thread
+  def generate_for_thread(thread_id):
+    num_programs = programs_per_thread + (1 if thread_id < remainder else 0)
+    temp_encoder_file = f"{TMP}/encoder_{thread_id}.txt.gzip"
+    temp_decoder_file = f"{TMP}/decoder_{thread_id}.txt.gzip"
+
+    with gzip.open(temp_encoder_file, 'wt') as f, gzip.open(temp_decoder_file, 'wt') as g:
+      for pair in gen_yarpgen(thread_id, num_programs):
+        unopt, opt = pair
+        f.write(bytes_to_hex_string(unopt) + "\n")
+        g.write(bytes_to_hex_string(opt) + "\n")
+
+    return (temp_encoder_file, temp_decoder_file)
+
+  # Create output files
+  encoder_corpus = f"{TMP}/encoder.txt.gzip"
+  decoder_corpus = f"{TMP}/decoder.txt.gzip"
+
+  # Run tasks in parallel using threads
+  with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+    futures = [executor.submit(generate_for_thread, i) for i in range(num_threads)]
+    temp_files = [future.result() for future in concurrent.futures.as_completed(futures)]
+
+  # Combine all temporary files into final output
+  with gzip.open(encoder_corpus, 'at') as f_enc, gzip.open(decoder_corpus, 'at') as f_dec:
+    for enc_file, dec_file in temp_files:
+      with gzip.open(enc_file, 'rt') as temp_enc, gzip.open(dec_file, 'rt') as temp_dec:
+        f_enc.write(temp_enc.read())
+        f_dec.write(temp_dec.read())
+
+      # Cleanup temporary files
+      os.remove(enc_file)
+      os.remove(dec_file)
+
+#gen_model_training_data_parallel()
 #gen_sentencepiece_training_data()
+#gen_model_training_data()
