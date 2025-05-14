@@ -12,13 +12,13 @@ HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 
 #vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
-NUM_VOCAB_TOKENS = 4093
+NUM_TOKENS = 16384
 NUM_SPECIAL_TOKENS = 3
-NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
+NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = 2048
-DEC_SEQ_LEN = 2048
-GENERATE_EVERY = 100
+ENC_SEQ_LEN = 8192
+DEC_SEQ_LEN = 8192
+GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
@@ -59,7 +59,8 @@ def get_model(pad_value):
 
 
   model = model.cuda()
-  #model = torch.compile(model)
+  model = model.bfloat16()
+  model = torch.compile(model)
   return model
 
 # our tokenization scheme is

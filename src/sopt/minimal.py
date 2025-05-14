@@ -22,7 +22,7 @@ def save_checkpoint(model,  optim, loss):
     'loss': loss.item(),},
     CHECKPOINT)
 
-def load_checkpoint(model, optim, loss):
+def load_checkpoint(model, optim, loss=0):
   if os.path.exists(CHECKPOINT):
     print(f"loading {CHECKPOINT}")
     checkpoint = torch.load(CHECKPOINT)
@@ -85,7 +85,6 @@ def cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder):
       yield mysrc, mysrc_mask, mytgt
 
 
-
 @timeit
 def train():
   sp_encoder = spm.SentencePieceProcessor(model_file=f'{ROOTDIR}/misc/encoder.model')
@@ -94,22 +93,19 @@ def train():
   decoder_gzip = f"{TMP}/decoder.txt.gzip"
   model = get_model(tkn('PAD'))
   report_model_size(model)
-  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
-  #optim = torchao.optim._AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
+  #optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
+  optim = torchao.optim._AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
-  scaler = torch.amp.GradScaler('cuda')
-  model, optim, loss = load_checkpoint(model, optim, 0)
+  model, optim, loss = load_checkpoint(model, optim)
   data_generator = cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
     asdf = next(data_generator)
     src, src_mask, tgt = asdf
-    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-      loss = model(src, tgt, mask=src_mask)
-    scaler.scale(loss).backward()
-    scaler.step(optim)
-    scaler.update()
+    loss = model(src, tgt, mask=src_mask)
+    loss.backward()
+    optim.step()
     scheduler.step(i/NUM_BATCHES)
     print(f'{i}: {loss.item()}')
 
