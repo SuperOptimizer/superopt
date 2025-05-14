@@ -12,9 +12,32 @@ import torchao
 
 
 from impl import (
-  save_checkpoint, load_checkpoint, get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, gen_yarpgen,
+  get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
   DTYPE, DEVICE, GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP)
 from util import report_cuda_size, timeit, report_model_size, chunkify
+from codegen import gen_yarpgen
+
+CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}-{MODEL_SIZE}.pt'
+
+def save_checkpoint(model,  optim, loss, scaler, scheduler):
+  torch.save({
+    'model_state_dict': model.state_dict(),
+    'optimizer_state_dict': optim.state_dict(),
+    'loss': loss.item(),
+    'scaler': scaler.state_dict(),
+    'scheduler': scheduler.state_dict()},
+    CHECKPOINT)
+
+def load_checkpoint(model, optim, loss):
+  if os.path.exists(CHECKPOINT):
+    print(f"loading {CHECKPOINT}")
+    checkpoint = torch.load(CHECKPOINT)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optim.load_state_dict(checkpoint['optimizer_state_dict'])
+    loss = checkpoint['loss']
+  return model, optim,  loss
+
+
 
 #todo: batch_size > 1
 def yarpgen_and_cycle(sp_encoder, sp_decoder):
