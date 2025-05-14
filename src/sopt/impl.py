@@ -17,6 +17,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torchao.prototype.quantized_training import int8_weight_only_quantized_training
+from torchao.optim import _AdamW
+from torchao import quantize_
+
 ARCH = 'x86'
 MODEL_SIZE = "small"
 
@@ -32,14 +36,15 @@ NUM_VOCAB_TOKENS = 4094
 NUM_SPECIAL_TOKENS = 2
 NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = 4096
-DEC_SEQ_LEN = 4096
+ENC_SEQ_LEN = 2048
+DEC_SEQ_LEN = 2048
 GENERATE_EVERY = 1000
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
 
 DTYPE = torch.bfloat16
+
 
 
 def get_model(pad_value):
@@ -49,6 +54,7 @@ def get_model(pad_value):
     pad_value=pad_value,
     tie_token_emb=True,
     return_tgt_loss=True,
+    ignore_index=pad_value,
 
     enc_attn_flash=True,
     enc_num_tokens=NUM_TOKENS,
@@ -73,7 +79,8 @@ def get_model(pad_value):
 
 
   model = model.cuda()
-  #model = torch.compile(model)
+  model = model.bfloat16()
+  model = torch.compile(model)
   return model
 
 # our tokenization scheme is

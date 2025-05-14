@@ -8,6 +8,7 @@ import random
 import tqdm
 import sentencepiece as spm
 import torchao
+from torchao.optim import _AdamW
 
 
 
@@ -19,13 +20,11 @@ from codegen import gen_yarpgen
 
 CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}-{MODEL_SIZE}.pt'
 
-def save_checkpoint(model,  optim, loss, scaler, scheduler):
+def save_checkpoint(model,  optim, loss):
   torch.save({
     'model_state_dict': model.state_dict(),
     'optimizer_state_dict': optim.state_dict(),
-    'loss': loss.item(),
-    'scaler': scaler.state_dict(),
-    'scheduler': scheduler.state_dict()},
+    'loss': loss.item(),},
     CHECKPOINT)
 
 def load_checkpoint(model, optim, loss):
@@ -74,10 +73,8 @@ def cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder):
 
       # Skip if sequences are too long
       if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
-        print("skipping...")
+        print("skipping... unopt len {} opt len {} orig unopt len {} orig opt len {}".format(len(unopt_tokens), len(opt_tokens), len(enc_line), len(dec_line)))
         continue
-      print("unopt len",len(unopt_tokens))
-      print("opt len",len(opt_tokens))
       # Prepare the tokens
       opt_tokens.insert(0, tkn('DECSTART'))
       mask = [True] * len(unopt_tokens)
@@ -100,23 +97,19 @@ def train():
   decoder_gzip = f"{TMP}/decoder.txt.gzip"
   model = get_model(tkn('PAD'))
   report_model_size(model)
-  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
-  #optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-  scaler = torch.amp.GradScaler('cuda')
+  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
+  #optim = torchao.optim._AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
   model, optim, loss = load_checkpoint(model, optim, 0)
   data_generator = cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
-    #src, src_mask, tgt = yarpgen_and_cycle(sp_encoder, sp_decoder)
     asdf = next(data_generator)
     src, src_mask, tgt = asdf
-    with torch.amp.autocast('cuda', dtype=DTYPE):
-      loss = model(src, tgt, mask=src_mask)
-    scaler.scale(loss).backward()
-    scaler.step(optim)
-    scaler.update()
+    loss = model(src, tgt, mask=src_mask)
+    loss.backward()
+    optim.step()
 
     scheduler.step(i/NUM_BATCHES)
     print(f'{i}: {loss.item()}')
@@ -125,7 +118,7 @@ def train():
       report_cuda_size()
     if i % GENERATE_EVERY == 0:
         if i > 0:
-          save_checkpoint(model,  optim, loss, scaler, scheduler)
+          save_checkpoint(model,  optim, loss)
         model.eval()
         src, src_mask, tgt  = next(data_generator)
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
