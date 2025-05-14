@@ -64,30 +64,32 @@ def yarpgen_and_cycle(sp_encoder, sp_decoder):
   mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
   return mysrc, mysrc_mask, mytgt
 
+def cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder):
+  """Generator that yields batches of data directly from gzip files."""
+  with gzip.open(encoder_gzip, 'rt') as f, gzip.open(decoder_gzip, 'rt') as g:
+    for enc_line, dec_line in zip(f, g):
 
-def cycle(batch_size, training_data, encoder_gzip, decoder_gzip, sp_encoder, sp_decoder):
-  if len(training_data) < batch_size:
-    with gzip.open(encoder_gzip,'rt') as f, gzip.open(decoder_gzip,'rt') as g:
-      for enc_line, dec_line in zip(f.readlines(), g.readlines()):
-        unopt_tokens = tokenize_hexstr(sp_encoder, enc_line)
-        opt_tokens = tokenize_hexstr(sp_decoder, dec_line)
-        #print(f"len unopt tokens {len(unopt_tokens)} len opt tokens {len(opt_tokens)} len unopt {len(unopt)} len opt {len(opt)}")
-        if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
-          continue
-        opt_tokens.insert(0, tkn('DECSTART'))
-        mask = [True] * len(unopt_tokens)
-        mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
-        unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
-        opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
-        training_data.append([unopt_tokens, opt_tokens, mask])
-  if len(training_data) >= batch_size:
-    batch = training_data[:batch_size]
-    training_data = training_data[batch_size:]
-    mysrc = torch.tensor(list(x[0] for x in batch)).long().to(DEVICE)
-    mytgt = torch.tensor(list(x[1] for x in batch)).long().to(DEVICE)
-    mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
-    return mysrc, mysrc_mask, mytgt, training_data
-  return None
+      unopt_tokens = tokenize_hexstr(sp_encoder, enc_line)
+      opt_tokens = tokenize_hexstr(sp_decoder, dec_line)
+
+      # Skip if sequences are too long
+      if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
+        print("skipping...")
+        continue
+      print("unopt len",len(unopt_tokens))
+      print("opt len",len(opt_tokens))
+      # Prepare the tokens
+      opt_tokens.insert(0, tkn('DECSTART'))
+      mask = [True] * len(unopt_tokens)
+      mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
+      unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
+      opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
+
+      mysrc = torch.tensor([unopt_tokens]).long().to(DEVICE)
+      mytgt = torch.tensor([opt_tokens]).long().to(DEVICE)
+      mysrc_mask = torch.tensor([mask]).bool().to(DEVICE)
+      yield mysrc, mysrc_mask, mytgt
+
 
 
 @timeit
@@ -103,12 +105,13 @@ def train():
   scaler = torch.amp.GradScaler('cuda')
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
   model, optim, loss = load_checkpoint(model, optim, 0)
-  training_data = []
+  data_generator = cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
     #src, src_mask, tgt = yarpgen_and_cycle(sp_encoder, sp_decoder)
-    src, src_mask, tgt, training_data = cycle(1, training_data,encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
+    asdf = next(data_generator)
+    src, src_mask, tgt = asdf
     with torch.amp.autocast('cuda', dtype=DTYPE):
       loss = model(src, tgt, mask=src_mask)
     scaler.scale(loss).backward()
@@ -124,8 +127,7 @@ def train():
         if i > 0:
           save_checkpoint(model,  optim, loss, scaler, scheduler)
         model.eval()
-        src, src_mask, tgt, training_data = cycle(1, training_data, encoder_gzip, decoder_gzip, sp_encoder,
-                                                        sp_decoder)
+        src, src_mask, tgt  = next(data_generator)
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
         start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)

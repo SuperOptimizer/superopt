@@ -48,56 +48,32 @@ def get_model(pad_value):
     dim=[256, 512, 768, 1024][size],
     pad_value=pad_value,
     tie_token_emb=True,
-    enc_attn_flash=True,
-    dec_attn_flash=True,
     return_tgt_loss=True,
+
+    enc_attn_flash=True,
     enc_num_tokens=NUM_TOKENS,
     enc_depth=4,
     enc_heads=4,
     enc_max_seq_len=ENC_SEQ_LEN,
+    enc_use_simple_rmsnorm=True,
+    enc_ff_no_bias=True,
+    enc_ff_swish=True,
+    enc_ff_glu=True,
+
+    dec_attn_flash=True,
     dec_num_tokens=NUM_TOKENS,
     dec_depth=4,
     dec_heads=4,
     dec_max_seq_len=DEC_SEQ_LEN,
-
-    #enc_attn_num_mem_kv=[6, 12, 18, 24][size],
-    #enc_num_memory_tokens=[6, 12, 18, 24][size],
-    #enc_use_simple_rmsnorm=True,
-    #enc_ff_no_bias=True,
-    #enc_ff_swish=True,
-    #enc_ff_glu=True,
-    #enc_attn_kv_heads=[1, 2, 3, 4][size],
-    #enc_attn_gate_values=True,
-    #enc_sandwich_coef=[2, 4, 6, 8][size],
-    #enc_shift_tokens=1,
-    #enc_use_abs_pos_emb=False,
-    #enc_attn_on_attn=True,
-    #enc_macaron=True,
-    # enc_rotary_pos_emb=True,
-    #enc_alibi_pos_bias=True,
-    #enc_alibi_num_heads=[2, 4, 6, 8][size],
-
-    #dec_attn_num_mem_kv=[6, 12, 18, 24][size],
-    #dec_num_memory_tokens=[6, 12, 18, 24][size],
-    #dec_use_simple_rmsnorm=True,
-    #dec_ff_no_bias=True,
-    #dec_ff_swish=True,
-    #dec_ff_glu=True,
-    #dec_attn_kv_heads=[1, 2, 3, 4][size],
-    #dec_attn_gate_values=False,
-    #dec_sandwich_coef=[2, 4, 6, 8][size],
-    #dec_shift_tokens=1,
-    #dec_use_abs_pos_emb=False,
-    #dec_attn_on_attn=False,
-    #dec_macaron=False,
-    # dec_rotary_pos_emb=True,
-    #dec_alibi_pos_bias=False,
-    #dec_alibi_num_heads=[2, 4, 6, 8][size])
+    dec_use_simple_rmsnorm=True,
+    dec_ff_no_bias=True,
+    dec_ff_swish=True,
+    dec_ff_glu=True,
   )
 
 
   model = model.cuda()
-  model = torch.compile(model)
+  #model = torch.compile(model)
   return model
 
 # our tokenization scheme is
@@ -113,7 +89,8 @@ def hex_string_to_bytes(hex_string):
   except:
     print("got an invalid hex string in hex_string_to_bytes")
   try:
-    hex_string.pop()
+    if len(hex_string) % 2 == 1:
+      return bytes.fromhex(hex_string[:-1])
     return bytes.fromhex(hex_string)
   except:
     return b"invalid"
