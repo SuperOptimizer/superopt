@@ -1,44 +1,24 @@
 import torch.utils.data
-from  subprocess import PIPE, run, Popen
 import os
-import sentencepiece as spm
-import platform
-import torch
 from x_transformers import XTransformer
-import x_transformers
-import torchao
-import gzip
-from torchao.float8 import convert_to_float8_training
 
 import torch
-import torch.nn as nn
-from torch.nn import Transformer
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
-from torchao.prototype.quantized_training import int8_weight_only_quantized_training
-from torchao.optim import _AdamW
-from torchao import quantize_
 
-ARCH = 'x86'
 MODEL_SIZE = "small"
-
-
-DEVICE = 'cuda'
 
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 
 #vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
-NUM_VOCAB_TOKENS = 4094
-NUM_SPECIAL_TOKENS = 2
+NUM_VOCAB_TOKENS = 4093
+NUM_SPECIAL_TOKENS = 3
 NUM_TOKENS = NUM_VOCAB_TOKENS + NUM_SPECIAL_TOKENS
 
 ENC_SEQ_LEN = 2048
 DEC_SEQ_LEN = 2048
-GENERATE_EVERY = 1000
+GENERATE_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 1
@@ -50,7 +30,7 @@ DTYPE = torch.bfloat16
 def get_model(pad_value):
   size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]
   model = XTransformer(
-    dim=[256, 512, 768, 1024][size],
+    dim=1024,
     pad_value=pad_value,
     tie_token_emb=True,
     return_tgt_loss=True,
@@ -79,8 +59,7 @@ def get_model(pad_value):
 
 
   model = model.cuda()
-  model = model.bfloat16()
-  model = torch.compile(model)
+  #model = torch.compile(model)
   return model
 
 # our tokenization scheme is
@@ -91,10 +70,6 @@ def bytes_to_hex_string(arr: bytes):
   return arr.hex().upper()
 
 def hex_string_to_bytes(hex_string):
-  try:
-    return bytes.fromhex(hex_string)
-  except:
-    print("got an invalid hex string in hex_string_to_bytes")
   try:
     if len(hex_string) % 2 == 1:
       return bytes.fromhex(hex_string[:-1])
@@ -107,6 +82,8 @@ def tkn(str):
     return NUM_VOCAB_TOKENS + 0
   elif str == 'DECSTART':
     return NUM_VOCAB_TOKENS + 1
+  elif str == 'EOS':
+    return NUM_VOCAB_TOKENS + 2
   raise
 
 def tokenize_bytes(sp, data: bytes):
@@ -114,6 +91,8 @@ def tokenize_bytes(sp, data: bytes):
   return tokens
 
 def detokenize_bytes(sp, tokens: [int]):
+  if tkn('EOS') in tokens:
+    print("got an eos token")
   tokens = [t for t in tokens if t < NUM_VOCAB_TOKENS]
   hexstr = sp.decode(tokens)
   return hex_string_to_bytes(hexstr)

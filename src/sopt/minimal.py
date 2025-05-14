@@ -1,20 +1,15 @@
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import os
-import sys
-import ast
 import gzip
 import torch
-import random
 import tqdm
 import sentencepiece as spm
 import torchao
-from torchao.optim import _AdamW
 
 
 
 from impl import (
   get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
-  DTYPE, DEVICE, GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP)
+   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 from codegen import gen_yarpgen
 
@@ -45,22 +40,23 @@ def yarpgen_and_cycle(sp_encoder, sp_decoder):
     unopt,opt = list(gen_yarpgen(0,1))[0]
     unopt_tokens = tokenize_bytes(sp_encoder, unopt)
     opt_tokens = tokenize_bytes(sp_decoder, opt)
-    if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
+    if len(unopt_tokens) >= ENC_SEQ_LEN-2 or len(opt_tokens) >= DEC_SEQ_LEN-2:
       print("skipping...")
       #try again
       pass
     else:
       done = True
   opt_tokens.insert(0, tkn('DECSTART'))
+  opt_tokens.append(tkn('EOS'))
   mask = [True] * len(unopt_tokens)
   mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
   unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
   opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
 
   batch = [[unopt_tokens, opt_tokens, mask]]
-  mysrc = torch.tensor(list(x[0] for x in batch)).long().to(DEVICE)
-  mytgt = torch.tensor(list(x[1] for x in batch)).long().to(DEVICE)
-  mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to(DEVICE)
+  mysrc = torch.tensor(list(x[0] for x in batch)).long().to('cuda')
+  mytgt = torch.tensor(list(x[1] for x in batch)).long().to('cuda')
+  mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to('cuda')
   return mysrc, mysrc_mask, mytgt
 
 def cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder):
@@ -77,14 +73,15 @@ def cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder):
         continue
       # Prepare the tokens
       opt_tokens.insert(0, tkn('DECSTART'))
+      opt_tokens.append(tkn('EOS'))
       mask = [True] * len(unopt_tokens)
       mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
       unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
       opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
 
-      mysrc = torch.tensor([unopt_tokens]).long().to(DEVICE)
-      mytgt = torch.tensor([opt_tokens]).long().to(DEVICE)
-      mysrc_mask = torch.tensor([mask]).bool().to(DEVICE)
+      mysrc = torch.tensor([unopt_tokens]).long().to('cuda')
+      mytgt = torch.tensor([opt_tokens]).long().to('cuda')
+      mysrc_mask = torch.tensor([mask]).bool().to('cuda')
       yield mysrc, mysrc_mask, mytgt
 
 
@@ -97,9 +94,10 @@ def train():
   decoder_gzip = f"{TMP}/decoder.txt.gzip"
   model = get_model(tkn('PAD'))
   report_model_size(model)
-  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
+  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
   #optim = torchao.optim._AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
+  scaler = torch.amp.GradScaler('cuda')
   model, optim, loss = load_checkpoint(model, optim, 0)
   data_generator = cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
@@ -107,10 +105,11 @@ def train():
     optim.zero_grad()
     asdf = next(data_generator)
     src, src_mask, tgt = asdf
-    loss = model(src, tgt, mask=src_mask)
-    loss.backward()
-    optim.step()
-
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+      loss = model(src, tgt, mask=src_mask)
+    scaler.scale(loss).backward()
+    scaler.step(optim)
+    scaler.update()
     scheduler.step(i/NUM_BATCHES)
     print(f'{i}: {loss.item()}')
 
@@ -122,8 +121,8 @@ def train():
         model.eval()
         src, src_mask, tgt  = next(data_generator)
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
-        start_tokens = torch.tensor([tkn('DECSTART')]).to(DEVICE)
-        sample = model.generate(src, start_tokens, DEC_SEQ_LEN, mask = src_mask)
+        start_tokens = torch.tensor([tkn('DECSTART')]).to('cuda')
+        sample = model.generate(src, start_tokens, DEC_SEQ_LEN, eos_token=tkn('EOS'), mask = src_mask)
         print_stmt = ""
         print_stmt += f"\ninput tokenized:  \n{detokenize_bytes(sp_encoder, src.tolist()[0])} \n"
         print_stmt += f"\npredicted detokenized:  \n{detokenize_bytes(sp_decoder, sample.tolist())}\n"
