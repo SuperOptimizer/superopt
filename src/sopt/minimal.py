@@ -9,7 +9,7 @@ import torchao
 
 from impl import (
   get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
-   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY)
+   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, GRADIENT_ACCUMULATE_EVERY)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 from codegen import gen_yarpgen
 
@@ -101,15 +101,19 @@ def train():
   data_generator = cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
-    optim.zero_grad()
-    src, src_mask, tgt = next(data_generator)
-    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-      loss = model(src, tgt, mask=src_mask)
-    scaler.scale(loss).backward()
+
+    for __ in range(GRADIENT_ACCUMULATE_EVERY):
+      src, src_mask, tgt = next(data_generator)
+      with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        loss = model(src, tgt, mask=src_mask)
+      scaler.scale(loss / GRADIENT_ACCUMULATE_EVERY).backward()
+
+    print(f'{i}: {loss.item()}')
     scaler.step(optim)
     scaler.update()
     scheduler.step(i/NUM_BATCHES)
-    print(f'{i}: {loss.item()}')
+    optim.zero_grad()
+
 
     if i % CHECKPOINT_EVERY == 0:
       report_cuda_size()

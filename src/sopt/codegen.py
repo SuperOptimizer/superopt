@@ -68,7 +68,7 @@ def gen_sentencepiece_training_data():
   num_threads = multiprocessing.cpu_count()
 
   # Total programs to generate
-  total_programs = 30000
+  total_programs = 50000
 
   # Split workload across threads
   programs_per_thread = total_programs // num_threads
@@ -125,7 +125,7 @@ def gen_sentencepiece_training_data():
             f"--model_type=unigram "
             f"--max_sentence_length=65535 "
             f"--bos_id=-1 --eos_id=-1 --pad_id=-1 "
-            f"--max_sentencepiece_length=128 "
+            f"--max_sentencepiece_length=32 "
             f"--num_threads=32 "
             f"--add_dummy_prefix=false "
             f"--train_extremely_large_corpus=true "
@@ -144,7 +144,7 @@ def gen_sentencepiece_training_data():
             f"--model_type=unigram "
             f"--max_sentence_length=65535 "
             f"--bos_id=-1 --eos_id=-1 --pad_id=-1 "
-            f"--max_sentencepiece_length=128 "
+            f"--max_sentencepiece_length=32 "
             f"--num_threads=32 "
             f"--add_dummy_prefix=false "
             f"--train_extremely_large_corpus=true "
@@ -157,7 +157,7 @@ def gen_sentencepiece_training_data():
 
   print("SentencePiece training complete!")
 
-def gen_model_training_data_parallel():
+def gen_model_training_data_parallel(gzip_num):
   import concurrent.futures
   import multiprocessing
 
@@ -165,7 +165,7 @@ def gen_model_training_data_parallel():
   num_threads = multiprocessing.cpu_count()
 
   # Total programs to generate
-  total_programs = 20000
+  total_programs = 2000
 
   # Split workload across threads
   programs_per_thread = total_programs // num_threads
@@ -188,8 +188,8 @@ def gen_model_training_data_parallel():
     return (temp_encoder_file, temp_decoder_file)
 
   # Create output files
-  encoder_corpus = f"{TMP}/encoder.txt.gzip"
-  decoder_corpus = f"{TMP}/decoder.txt.gzip"
+  encoder_corpus = f"{TMP}/encoder_{gzip_num}.txt.gzip"
+  decoder_corpus = f"{TMP}/decoder_{gzip_num}.txt.gzip"
 
   # Run tasks in parallel using threads
   with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
@@ -209,6 +209,6 @@ def gen_model_training_data_parallel():
 
 if __name__ == '__main__':
     for i in range(20):
-      gen_model_training_data_parallel()
+      gen_model_training_data_parallel(i)
     #gen_sentencepiece_training_data()
     #gen_model_training_data()

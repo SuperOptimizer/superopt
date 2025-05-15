@@ -12,18 +12,18 @@ HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 
 #vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
-NUM_TOKENS = 65536
+NUM_TOKENS = 16384
 NUM_SPECIAL_TOKENS = 3
 NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = int(8192*1)
-DEC_SEQ_LEN = int(8192*1)
+ENC_SEQ_LEN = int(8192*0.5)
+DEC_SEQ_LEN = int(8192*0.5)
 GENERATE_EVERY = 10000
 CHECKPOINT_EVERY = GENERATE_EVERY // 10
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
 BATCH_SIZE = 1
-
+GRADIENT_ACCUMULATE_EVERY = 4
 DTYPE = torch.bfloat16
 
 
@@ -92,8 +92,6 @@ def tokenize_bytes(sp, data: bytes):
   return tokens
 
 def detokenize_bytes(sp, tokens: [int]):
-  if tkn('EOS') in tokens:
-    print("got an eos token")
   tokens = [t for t in tokens if t < NUM_VOCAB_TOKENS]
   hexstr = sp.decode(tokens)
   return hex_string_to_bytes(hexstr)
@@ -107,3 +105,60 @@ def detokenize_hexstr(sp, tokens: [int]):
   hexstr = sp.decode(tokens)
   return hexstr
 
+
+def bytes_to_bitstream(arr: bytes):
+  """Convert a bytes array to a string of '0' and '1' characters."""
+  bits = ''
+  for byte in arr:
+    # Convert each byte to its 8-bit binary representation
+    bits += format(byte, '08b')
+  return bits
+
+
+def bitstream_to_bytes(bitstream: str):
+  """Convert a string of '0' and '1' characters to a bytes array.
+     If the length is not a multiple of 8, pad with 0s."""
+  # Check if the input is a valid bit string
+  if not all(bit in '01' for bit in bitstream):
+    return b"invalid"
+
+  # Pad with 0s if necessary to make length a multiple of 8
+  padding = 0
+  if len(bitstream) % 8 != 0:
+    padding = 8 - (len(bitstream) % 8)
+    bitstream += '0' * padding
+
+  # Convert each 8-bit group to a byte
+  result = bytearray()
+  for i in range(0, len(bitstream), 8):
+    byte_bits = bitstream[i:i + 8]
+    byte_value = int(byte_bits, 2)
+    result.append(byte_value)
+
+  return bytes(result)
+
+
+def tokenize_bytes_to_bitstream(sp, data: bytes):
+    """Convert bytes to bitstream, then tokenize."""
+    bitstream = bytes_to_bitstream(data)
+    tokens = sp.encode(bitstream)
+    return tokens
+
+def detokenize_bytes_from_bitstream(sp, tokens: [int]):
+    """Detokenize to bitstream, then convert to bytes."""
+    if tkn('EOS') in tokens:
+        print("got an eos token")
+    tokens = [t for t in tokens if t < NUM_VOCAB_TOKENS]
+    bitstream = sp.decode(tokens)
+    return bitstream_to_bytes(bitstream)
+
+def tokenize_bitstream(sp, bitstream: str):
+    """Directly tokenize a bitstream."""
+    tokens = sp.encode(bitstream)
+    return tokens
+
+def detokenize_bitstream(sp, tokens: [int]):
+    """Detokenize to a bitstream."""
+    tokens = [t for t in tokens if t < NUM_VOCAB_TOKENS]
+    bitstream = sp.decode(tokens)
+    return bitstream
