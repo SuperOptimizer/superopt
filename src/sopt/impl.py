@@ -12,15 +12,16 @@ HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 
 #vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
-NUM_TOKENS = 16384
+NUM_TOKENS = 65536
 NUM_SPECIAL_TOKENS = 3
 NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = 8192
-DEC_SEQ_LEN = 8192
-GENERATE_EVERY = 1000
+ENC_SEQ_LEN = int(8192*1)
+DEC_SEQ_LEN = int(8192*1)
+GENERATE_EVERY = 10000
+CHECKPOINT_EVERY = GENERATE_EVERY // 10
 LEARNING_RATE = 1e-4
-NUM_BATCHES = int(1e5)
+NUM_BATCHES = int(1e7)
 BATCH_SIZE = 1
 
 DTYPE = torch.bfloat16
@@ -32,14 +33,14 @@ def get_model(pad_value):
   model = XTransformer(
     dim=1024,
     pad_value=pad_value,
-    tie_token_emb=True,
+    tie_token_emb=False,
     return_tgt_loss=True,
     ignore_index=pad_value,
 
     enc_attn_flash=True,
     enc_num_tokens=NUM_TOKENS,
-    enc_depth=4,
-    enc_heads=4,
+    enc_depth=4*4,
+    enc_heads=4*3,
     enc_max_seq_len=ENC_SEQ_LEN,
     enc_use_simple_rmsnorm=True,
     enc_ff_no_bias=True,
@@ -48,8 +49,8 @@ def get_model(pad_value):
 
     dec_attn_flash=True,
     dec_num_tokens=NUM_TOKENS,
-    dec_depth=4,
-    dec_heads=4,
+    dec_depth=4*4,
+    dec_heads=4*3,
     dec_max_seq_len=DEC_SEQ_LEN,
     dec_use_simple_rmsnorm=True,
     dec_ff_no_bias=True,
@@ -59,7 +60,6 @@ def get_model(pad_value):
 
 
   model = model.cuda()
-  model = model.bfloat16()
   model = torch.compile(model)
   return model
 

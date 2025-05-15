@@ -9,13 +9,14 @@ import torchao
 
 from impl import (
   get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
-   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP)
+   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 from codegen import gen_yarpgen
 
 CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}-{MODEL_SIZE}.pt'
 
 def save_checkpoint(model,  optim, loss):
+  print("saving",CHECKPOINT)
   torch.save({
     'model_state_dict': model.state_dict(),
     'optimizer_state_dict': optim.state_dict(),
@@ -93,27 +94,28 @@ def train():
   decoder_gzip = f"{TMP}/decoder.txt.gzip"
   model = get_model(tkn('PAD'))
   report_model_size(model)
-  #optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
-  optim = torchao.optim._AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
+  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
+  scaler = torch.amp.GradScaler('cuda')
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
   model, optim, loss = load_checkpoint(model, optim)
   data_generator = cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
     optim.zero_grad()
-    asdf = next(data_generator)
-    src, src_mask, tgt = asdf
-    loss = model(src, tgt, mask=src_mask)
-    loss.backward()
-    optim.step()
+    src, src_mask, tgt = next(data_generator)
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+      loss = model(src, tgt, mask=src_mask)
+    scaler.scale(loss).backward()
+    scaler.step(optim)
+    scaler.update()
     scheduler.step(i/NUM_BATCHES)
     print(f'{i}: {loss.item()}')
 
-    if i == 0:
+    if i % CHECKPOINT_EVERY == 0:
       report_cuda_size()
+      if i > 0:
+        save_checkpoint(model, optim, loss)
     if i % GENERATE_EVERY == 0:
-        if i > 0:
-          save_checkpoint(model,  optim, loss)
         model.eval()
         src, src_mask, tgt  = next(data_generator)
         src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]

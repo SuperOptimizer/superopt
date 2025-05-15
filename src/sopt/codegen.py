@@ -68,7 +68,7 @@ def gen_sentencepiece_training_data():
   num_threads = multiprocessing.cpu_count()
 
   # Total programs to generate
-  total_programs = 20000
+  total_programs = 30000
 
   # Split workload across threads
   programs_per_thread = total_programs // num_threads
@@ -125,8 +125,10 @@ def gen_sentencepiece_training_data():
             f"--model_type=unigram "
             f"--max_sentence_length=65535 "
             f"--bos_id=-1 --eos_id=-1 --pad_id=-1 "
-            f"--max_sentencepiece_length=64 "
+            f"--max_sentencepiece_length=128 "
+            f"--num_threads=32 "
             f"--add_dummy_prefix=false "
+            f"--train_extremely_large_corpus=true "
             f"--split_by_number=false".split(),
             stdin=PIPE, stdout=PIPE, stderr=PIPE, cwd=TMP)
 
@@ -142,8 +144,10 @@ def gen_sentencepiece_training_data():
             f"--model_type=unigram "
             f"--max_sentence_length=65535 "
             f"--bos_id=-1 --eos_id=-1 --pad_id=-1 "
-            f"--max_sentencepiece_length=64 "
+            f"--max_sentencepiece_length=128 "
+            f"--num_threads=32 "
             f"--add_dummy_prefix=false "
+            f"--train_extremely_large_corpus=true "
             f"--split_by_number=false".split(),
             stdin=PIPE, stdout=PIPE, stderr=PIPE, cwd=TMP)
 

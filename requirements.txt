@@ -6,5 +6,4 @@ numpy
 iced-x86
 sentencepiece
 pyelftools
-torch
 bitsandbytes
