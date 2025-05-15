@@ -125,6 +125,7 @@ def gen_sentencepiece_training_data():
             f"--model_type=unigram "
             f"--max_sentence_length=65535 "
             f"--bos_id=-1 --eos_id=-1 --pad_id=-1 "
+            f"--max_sentencepiece_length=64 "
             f"--add_dummy_prefix=false "
             f"--split_by_number=false".split(),
             stdin=PIPE, stdout=PIPE, stderr=PIPE, cwd=TMP)
@@ -141,6 +142,7 @@ def gen_sentencepiece_training_data():
             f"--model_type=unigram "
             f"--max_sentence_length=65535 "
             f"--bos_id=-1 --eos_id=-1 --pad_id=-1 "
+            f"--max_sentencepiece_length=64 "
             f"--add_dummy_prefix=false "
             f"--split_by_number=false".split(),
             stdin=PIPE, stdout=PIPE, stderr=PIPE, cwd=TMP)
@@ -202,7 +204,7 @@ def gen_model_training_data_parallel():
       os.remove(dec_file)
 
 if __name__ == '__main__':
-    #for i in range(20):
-    #  gen_model_training_data_parallel()
-    gen_sentencepiece_training_data()
+    for i in range(20):
+      gen_model_training_data_parallel()
+    #gen_sentencepiece_training_data()
     #gen_model_training_data()
