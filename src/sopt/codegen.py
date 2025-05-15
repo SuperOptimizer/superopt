@@ -188,8 +188,8 @@ def gen_model_training_data_parallel(gzip_num):
     return (temp_encoder_file, temp_decoder_file)
 
   # Create output files
-  encoder_corpus = f"{TMP}/encoder_{gzip_num}.txt.gzip"
-  decoder_corpus = f"{TMP}/decoder_{gzip_num}.txt.gzip"
+  encoder_corpus = f"{TMP}/encoder_corpus_{gzip_num}.txt.gzip"
+  decoder_corpus = f"{TMP}/decoder_corpus_{gzip_num}.txt.gzip"
 
   # Run tasks in parallel using threads
   with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
