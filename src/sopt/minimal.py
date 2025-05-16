@@ -4,7 +4,7 @@ import torch
 import tqdm
 import sentencepiece as spm
 import torchao
-
+from torchao.optim import _AdamW
 
 
 from impl import (
@@ -100,8 +100,8 @@ def train():
 
   model = get_model(tkn('PAD'))
   report_model_size(model)
-  optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
-  scaler = torch.amp.GradScaler('cuda')
+  #optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
+  optim = _AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
   model, optim, loss = load_checkpoint(model, optim)
   data_generator = cycle(sp_encoder, sp_decoder)
@@ -110,16 +110,13 @@ def train():
 
     for __ in range(GRADIENT_ACCUMULATE_EVERY):
       src, src_mask, tgt = next(data_generator)
-      with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-        loss = model(src, tgt, mask=src_mask)
-      scaler.scale(loss / GRADIENT_ACCUMULATE_EVERY).backward()
+      loss = model(src, tgt, mask=src_mask)
+      (loss / GRADIENT_ACCUMULATE_EVERY).backward()
 
     print(f'{i}: {loss.item()}')
-    scaler.step(optim)
-    scaler.update()
+    optim.step()
     scheduler.step(i/NUM_BATCHES)
     optim.zero_grad()
-
 
     if i % CHECKPOINT_EVERY == 0:
       report_cuda_size()
@@ -142,4 +139,7 @@ def main():
     train()
 
 if __name__ == '__main__':
+  torch.set_float32_matmul_precision('medium')
+  torch.backends.cudnn.benchmark = True
+  torch.backends.cuda.matmul.allow_tf32 = True
   main()

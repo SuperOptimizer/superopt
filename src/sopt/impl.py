@@ -3,8 +3,10 @@ import os
 from x_transformers import XTransformer
 
 import torch
-
-
+from torchao.float8 import convert_to_float8_training
+import bitsandbytes as bnb
+from torchao.prototype.quantized_training import int8_weight_only_quantized_training, bitnet_training
+from torchao import quantize_
 MODEL_SIZE = "small"
 
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
@@ -23,15 +25,31 @@ CHECKPOINT_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
 BATCH_SIZE = 1
-GRADIENT_ACCUMULATE_EVERY = 32
+GRADIENT_ACCUMULATE_EVERY = 16
 DTYPE = torch.bfloat16
 
+
+def module_filter_fn(mod: torch.nn.Module, fqn: str):
+  # don't convert the last module
+  if "attn" not in fqn:
+    return False
+  if "logit" in fqn:
+    return False
+  if fqn == "1":
+    return False
+  # don't convert linear modules with weight dimensions not divisible by 16
+  if isinstance(mod, torch.nn.Linear):
+    if mod.in_features == 3072:
+      return True
+    if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+      return False
+  return False
 
 
 def get_model(pad_value):
   size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]
   model = XTransformer(
-    dim=1024,
+    dim=768,
     pad_value=pad_value,
     tie_token_emb=False,
     return_tgt_loss=True,
@@ -40,31 +58,29 @@ def get_model(pad_value):
     enc_attn_flash=True,
     enc_num_tokens=NUM_TOKENS,
     enc_depth=4*4,
-    enc_heads=4*3,
+    enc_heads=4*4,
     enc_max_seq_len=ENC_SEQ_LEN,
     enc_use_simple_rmsnorm=True,
     enc_ff_no_bias=True,
     #enc_ff_swish=True,
     #enc_ff_glu=True,
     enc_use_abs_pos_emb=False,
-    enc_attn_one_kv_head=True,
 
     dec_attn_flash=True,
     dec_num_tokens=NUM_TOKENS,
     dec_depth=4*4,
-    dec_heads=4*3,
+    dec_heads=4*4,
     dec_max_seq_len=DEC_SEQ_LEN,
     dec_use_simple_rmsnorm=True,
     dec_ff_no_bias=True,
     #dec_ff_swish=True,
     #dec_ff_glu=True,
     dec_use_abs_pos_emb=False,
-    dec_attn_one_kv_head=True,
   )
-
-
   model = model.cuda()
-  model = torch.compile(model, mode='max-autotune-no-cudagraphs', fullgraph=False)
+  model = model.bfloat16()
+  convert_to_float8_training(model, module_filter_fn=module_filter_fn)
+  #model = torch.compile(model)
   return model
 
 # our tokenization scheme is
