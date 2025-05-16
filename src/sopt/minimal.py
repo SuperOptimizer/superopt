@@ -9,7 +9,7 @@ import torchao
 
 from impl import (
   get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
-   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, GRADIENT_ACCUMULATE_EVERY)
+   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, GRADIENT_ACCUMULATE_EVERY, HOMEDIR)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 from codegen import gen_yarpgen
 
@@ -60,45 +60,51 @@ def yarpgen_and_cycle(sp_encoder, sp_decoder):
   mysrc_mask = torch.tensor(list(x[2] for x in batch)).bool().to('cuda')
   return mysrc, mysrc_mask, mytgt
 
-def cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder):
+def cycle(sp_encoder, sp_decoder):
   """Generator that yields batches of data directly from gzip files."""
-  with gzip.open(encoder_gzip, 'rt') as f, gzip.open(decoder_gzip, 'rt') as g:
-    for enc_line, dec_line in zip(f, g):
+  while True:
+    num_gzips = len(os.listdir(f"{HOMEDIR}/superopt_data/"))
+    assert num_gzips % 2 == 0
+    for i in range(num_gzips // 2):
+      encoder_gzip = f"{HOMEDIR}/superopt_data/encoder_corpus_{i}.txt.gzip"
+      decoder_gzip = f"{HOMEDIR}/superopt_data/decoder_corpus_{i}.txt.gzip"
+      print("loading ",encoder_gzip, decoder_gzip)
+      with gzip.open(encoder_gzip, 'rt') as f, gzip.open(decoder_gzip, 'rt') as g:
+        for enc_line, dec_line in zip(f, g):
 
-      unopt_tokens = tokenize_hexstr(sp_encoder, enc_line)
-      opt_tokens = tokenize_hexstr(sp_decoder, dec_line)
+          unopt_tokens = tokenize_hexstr(sp_encoder, enc_line)
+          opt_tokens = tokenize_hexstr(sp_decoder, dec_line)
 
-      # Skip if sequences are too long
-      if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
-        print("skipping... unopt len {} opt len {} orig unopt len {} orig opt len {}".format(len(unopt_tokens), len(opt_tokens), len(enc_line), len(dec_line)))
-        continue
-      # Prepare the tokens
-      opt_tokens.insert(0, tkn('DECSTART'))
-      opt_tokens.append(tkn('EOS'))
-      mask = [True] * len(unopt_tokens)
-      mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
-      unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
-      opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
+          # Skip if sequences are too long
+          if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
+            print("skipping... unopt len {} opt len {} orig unopt len {} orig opt len {}".format(len(unopt_tokens), len(opt_tokens), len(enc_line), len(dec_line)))
+            continue
+          # Prepare the tokens
+          opt_tokens.insert(0, tkn('DECSTART'))
+          opt_tokens.append(tkn('EOS'))
+          mask = [True] * len(unopt_tokens)
+          mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
+          unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
+          opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
 
-      mysrc = torch.tensor([unopt_tokens]).long().to('cuda')
-      mytgt = torch.tensor([opt_tokens]).long().to('cuda')
-      mysrc_mask = torch.tensor([mask]).bool().to('cuda')
-      yield mysrc, mysrc_mask, mytgt
+          mysrc = torch.tensor([unopt_tokens]).long().to('cuda')
+          mytgt = torch.tensor([opt_tokens]).long().to('cuda')
+          mysrc_mask = torch.tensor([mask]).bool().to('cuda')
+          yield mysrc, mysrc_mask, mytgt
 
 
 @timeit
 def train():
   sp_encoder = spm.SentencePieceProcessor(model_file=f'{ROOTDIR}/misc/encoder.model')
   sp_decoder = spm.SentencePieceProcessor(model_file=f'{ROOTDIR}/misc/decoder.model')
-  encoder_gzip = f"{TMP}/encoder.txt.gzip"
-  decoder_gzip = f"{TMP}/decoder.txt.gzip"
+
   model = get_model(tkn('PAD'))
   report_model_size(model)
   optim = torchao.optim.AdamW4bit(model.parameters(), lr=LEARNING_RATE)
   scaler = torch.amp.GradScaler('cuda')
   scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
   model, optim, loss = load_checkpoint(model, optim)
-  data_generator = cycle(encoder_gzip, decoder_gzip, sp_encoder, sp_decoder)
+  data_generator = cycle(sp_encoder, sp_decoder)
   for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
     model.train()
 

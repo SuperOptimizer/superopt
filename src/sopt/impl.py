@@ -16,14 +16,14 @@ NUM_TOKENS = 16384
 NUM_SPECIAL_TOKENS = 3
 NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = int(8192*0.5)
-DEC_SEQ_LEN = int(8192*0.5)
-GENERATE_EVERY = 10000
-CHECKPOINT_EVERY = GENERATE_EVERY // 10
+ENC_SEQ_LEN = int(8192*1)
+DEC_SEQ_LEN = int(8192*1)
+GENERATE_EVERY = 100
+CHECKPOINT_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
 BATCH_SIZE = 1
-GRADIENT_ACCUMULATE_EVERY = 4
+GRADIENT_ACCUMULATE_EVERY = 32
 DTYPE = torch.bfloat16
 
 
@@ -44,8 +44,10 @@ def get_model(pad_value):
     enc_max_seq_len=ENC_SEQ_LEN,
     enc_use_simple_rmsnorm=True,
     enc_ff_no_bias=True,
-    enc_ff_swish=True,
-    enc_ff_glu=True,
+    #enc_ff_swish=True,
+    #enc_ff_glu=True,
+    enc_use_abs_pos_emb=False,
+    enc_attn_one_kv_head=True,
 
     dec_attn_flash=True,
     dec_num_tokens=NUM_TOKENS,
@@ -54,13 +56,15 @@ def get_model(pad_value):
     dec_max_seq_len=DEC_SEQ_LEN,
     dec_use_simple_rmsnorm=True,
     dec_ff_no_bias=True,
-    dec_ff_swish=True,
-    dec_ff_glu=True,
+    #dec_ff_swish=True,
+    #dec_ff_glu=True,
+    dec_use_abs_pos_emb=False,
+    dec_attn_one_kv_head=True,
   )
 
 
   model = model.cuda()
-  model = torch.compile(model)
+  model = torch.compile(model, mode='max-autotune-no-cudagraphs', fullgraph=False)
   return model
 
 # our tokenization scheme is

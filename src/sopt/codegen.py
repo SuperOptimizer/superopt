@@ -6,7 +6,7 @@ import gzip
 
 
 
-from impl import ROOTDIR, TMP, bytes_to_hex_string,  NUM_VOCAB_TOKENS
+from impl import ROOTDIR, TMP, bytes_to_hex_string,  NUM_VOCAB_TOKENS, HOMEDIR
 
 CCFLAGS = '-Wall -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -march=znver3 '
 
@@ -157,7 +157,7 @@ def gen_sentencepiece_training_data():
 
   print("SentencePiece training complete!")
 
-def gen_model_training_data_parallel(gzip_num):
+def gen_model_training_data_parallel():
   import concurrent.futures
   import multiprocessing
 
@@ -165,13 +165,14 @@ def gen_model_training_data_parallel(gzip_num):
   num_threads = multiprocessing.cpu_count()
 
   # Total programs to generate
-  total_programs = 2000
+  total_programs = 10000
 
   # Split workload across threads
   programs_per_thread = total_programs // num_threads
   remainder = total_programs % num_threads
 
   os.makedirs(TMP, exist_ok=True)
+  os.makedirs(f"{HOMEDIR}/superopt_data", exist_ok=True)
 
   # Function to generate programs for a specific thread
   def generate_for_thread(thread_id):
@@ -186,10 +187,11 @@ def gen_model_training_data_parallel(gzip_num):
         g.write(bytes_to_hex_string(opt) + "\n")
 
     return (temp_encoder_file, temp_decoder_file)
-
+  gzip_num = len(os.listdir(f"{HOMEDIR}/superopt_data/"))//2
   # Create output files
-  encoder_corpus = f"{TMP}/encoder_corpus_{gzip_num}.txt.gzip"
-  decoder_corpus = f"{TMP}/decoder_corpus_{gzip_num}.txt.gzip"
+  encoder_corpus = f"{HOMEDIR}/superopt_data/encoder_corpus_{gzip_num}.txt.gzip"
+  decoder_corpus = f"{HOMEDIR}/superopt_data/decoder_corpus_{gzip_num}.txt.gzip"
+  print("outputting",encoder_corpus,decoder_corpus)
 
   # Run tasks in parallel using threads
   with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
@@ -209,6 +211,6 @@ def gen_model_training_data_parallel(gzip_num):
 
 if __name__ == '__main__':
     for i in range(20):
-      gen_model_training_data_parallel(i)
+      gen_model_training_data_parallel()
     #gen_sentencepiece_training_data()
     #gen_model_training_data()
