@@ -197,7 +197,7 @@ def train():
     data_loader = FullDatasetLoader(
         data_dir,
         sp_model_path,
-        prefetch_buffer=10000,  # How many samples to keep in queue
+        prefetch_buffer=1000,  # How many samples to keep in queue
         num_workers=8
     )
 
@@ -210,8 +210,14 @@ def train():
     scaler = torch.amp.GradScaler('cuda')
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=100)
     model, optim, loss = load_checkpoint(model, optim)
+    next(data_iter)
 
     print("Starting training with full dataset async loading...")
+
+    # Start timing and iteration counting
+    import time
+    start_time = time.time()
+    iteration_count = 0
 
     for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
         model.train()
@@ -234,8 +240,13 @@ def train():
             with torch.amp.autocast('cuda', dtype=torch.bfloat16):
                 loss = model(src, tgt, mask=src_mask)
                 scaler.scale(loss / GRADIENT_ACCUMULATE_EVERY).backward()
+            iteration_count += 1
 
-        print(f'{i}: {loss.item()}')
+        # Calculate and report iterations per second
+        elapsed_time = time.time() - start_time
+        iterations_per_sec = iteration_count / elapsed_time
+
+        print(f'{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s')
 
         # Optional: print queue size for monitoring
         if use_full_async and i % 100 == 0:
