@@ -1,32 +1,33 @@
 import torch.utils.data
 import os
 from x_transformers import XTransformer
-
 import torch
-from torchao.float8 import convert_to_float8_training
-import bitsandbytes as bnb
-from torchao.prototype.quantized_training import int8_weight_only_quantized_training, bitnet_training
-from torchao import quantize_
-MODEL_SIZE = "small"
+
 
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 
+if '4060' in torch.cuda.get_device_name():
+  MODEL_SIZE = 'small'
+elif '4090' in torch.cuda.get_device_name():
+  MODEL_SIZE = 'medium'
+elif 'h100' in torch.cuda.get_device_name():
+  MODEL_SIZE = 'large'
+
 #vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
-NUM_TOKENS = 16384
+NUM_TOKENS = 8192
 NUM_SPECIAL_TOKENS = 3
 NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = int(8192*1)
-DEC_SEQ_LEN = int(8192*1)
+ENC_SEQ_LEN = 2048
+DEC_SEQ_LEN = 2048
 GENERATE_EVERY = 100
 CHECKPOINT_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
 BATCH_SIZE = 1
 GRADIENT_ACCUMULATE_EVERY = 16
-DTYPE = torch.bfloat16
 
 
 def module_filter_fn(mod: torch.nn.Module, fqn: str):
@@ -47,19 +48,19 @@ def module_filter_fn(mod: torch.nn.Module, fqn: str):
 
 
 def get_model(pad_value):
-  size = {'small': 0, 'medium': 1, 'large': 2, 'xl': 3}[MODEL_SIZE]
+  size = {'small': 1, 'medium': 2, 'large': 3, 'xl': 4}[MODEL_SIZE]
   model = XTransformer(
-    dim=768,
+    dim=256 * size,
     pad_value=pad_value,
-    tie_token_emb=False,
+    tie_token_emb=True,
     return_tgt_loss=True,
     ignore_index=pad_value,
 
     enc_attn_flash=True,
     enc_num_tokens=NUM_TOKENS,
-    enc_depth=4*4,
-    enc_heads=4*4,
-    enc_max_seq_len=ENC_SEQ_LEN,
+    enc_depth=4*size,
+    enc_heads=4*size,
+    enc_max_seq_len=2048* size,
     enc_use_simple_rmsnorm=True,
     enc_ff_no_bias=True,
     #enc_ff_swish=True,
@@ -68,9 +69,9 @@ def get_model(pad_value):
 
     dec_attn_flash=True,
     dec_num_tokens=NUM_TOKENS,
-    dec_depth=4*4,
-    dec_heads=4*4,
-    dec_max_seq_len=DEC_SEQ_LEN,
+    dec_depth=4*size,
+    dec_heads=4*size,
+    dec_max_seq_len=DEC_SEQ_LEN // size,
     dec_use_simple_rmsnorm=True,
     dec_ff_no_bias=True,
     #dec_ff_swish=True,
@@ -78,9 +79,7 @@ def get_model(pad_value):
     dec_use_abs_pos_emb=False,
   )
   model = model.cuda()
-  model = model.bfloat16()
-  convert_to_float8_training(model, module_filter_fn=module_filter_fn)
-  #model = torch.compile(model)
+  model = torch.compile(model)
   return model
 
 # our tokenization scheme is
