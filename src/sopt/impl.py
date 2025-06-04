@@ -9,11 +9,11 @@ HOMEDIR = os.path.abspath(os.path.expanduser("~"))
 TMP = '/tmp/sopt'
 
 if '4060' in torch.cuda.get_device_name():
-  MODEL_SIZE = 'small'
-elif '4090' in torch.cuda.get_device_name():
   MODEL_SIZE = 'medium'
-elif 'h100' in torch.cuda.get_device_name():
+elif '4090' in torch.cuda.get_device_name():
   MODEL_SIZE = 'large'
+elif 'h100' in torch.cuda.get_device_name():
+  MODEL_SIZE = 'xl'
 
 #vocab tokens are the first 0 through NUM_VOCAB_TOKENS-1, used by sentencepiece
 NUM_TOKENS = 8192

@@ -104,9 +104,9 @@ def train():
         start_tokens = torch.tensor([tkn('DECSTART')]).to('cuda')
         sample = model.generate(src, start_tokens, DEC_SEQ_LEN, eos_token=tkn('EOS'), mask = src_mask)
         print_stmt = ""
-        print_stmt += f"\ninput tokenized:  \n{detokenize_bytes(sp_encoder, src.tolist()[0])} \n"
-        print_stmt += f"\npredicted detokenized:  \n{detokenize_bytes(sp_decoder, sample.tolist())}\n"
-        print_stmt += f"\nactual detokenized:     \n{detokenize_bytes(sp_decoder, tgt.tolist()[0])}\n"
+        print_stmt += f"\ninput tokenized:  \n{detokenize_bytes(sp, src.tolist()[0])} \n"
+        print_stmt += f"\npredicted detokenized:  \n{detokenize_bytes(sp, sample.tolist())}\n"
+        print_stmt += f"\nactual detokenized:     \n{detokenize_bytes(sp, tgt.tolist()[0])}\n"
         print(print_stmt)
 
 

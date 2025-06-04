@@ -176,7 +176,7 @@ def gen_model_training_data_parallel():
       os.remove(dec_file)
 
 if __name__ == '__main__':
-    #for i in range(20):
-    #  gen_model_training_data_parallel()
-    gen_sentencepiece_training_data()
+    for i in range(20):
+      gen_model_training_data_parallel()
+    #gen_sentencepiece_training_data()
     #gen_model_training_data()
