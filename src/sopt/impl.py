@@ -26,8 +26,8 @@ GENERATE_EVERY = 100
 CHECKPOINT_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
-BATCH_SIZE = 1
-GRADIENT_ACCUMULATE_EVERY = 16
+BATCH_SIZE = 4
+GRADIENT_ACCUMULATE_EVERY = 32
 
 
 def module_filter_fn(mod: torch.nn.Module, fqn: str):
@@ -60,7 +60,7 @@ def get_model(pad_value):
     enc_num_tokens=NUM_TOKENS,
     enc_depth=4*size,
     enc_heads=4*size,
-    enc_max_seq_len=2048* size,
+    enc_max_seq_len=ENC_SEQ_LEN* size,
     enc_use_simple_rmsnorm=True,
     enc_ff_no_bias=True,
     #enc_ff_swish=True,
@@ -71,7 +71,7 @@ def get_model(pad_value):
     dec_num_tokens=NUM_TOKENS,
     dec_depth=4*size,
     dec_heads=4*size,
-    dec_max_seq_len=DEC_SEQ_LEN // size,
+    dec_max_seq_len=DEC_SEQ_LEN * size,
     dec_use_simple_rmsnorm=True,
     dec_ff_no_bias=True,
     #dec_ff_swish=True,
