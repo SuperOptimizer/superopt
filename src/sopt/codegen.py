@@ -22,19 +22,19 @@ def gen_yarpgen(threadnum, num):
   yarpgen = f'/{ROOTDIR}/bin/{platform.system()}/yarpgen'
   outdir = f'/{TMP}/yarpgen_{threadnum}'
   os.makedirs(outdir, exist_ok=True)
-  c_file = f'{outdir}/func.c'
+  c_file = f'{outdir}/func.cpp'
   opt_obj = f'{outdir}/func.opt.o'
   unopt_obj = f'{outdir}/func.unopt.o'
 
   for x in range(num):
     print(x)
-    ret = run(f'{yarpgen} --std=c -o {outdir}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    ret = run(f'{yarpgen} --std=c++ -o {outdir}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
     if ret.returncode != 0:
       raise
-    ret = run(f'clang -c {c_file} -o {unopt_obj} -include stdint.h -O0 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    ret = run(f'clang++ -c {c_file} -o {unopt_obj}  -O0 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
     if ret.returncode != 0:
       raise
-    ret = run(f'clang -c {c_file} -o {opt_obj}   -include stdint.h -O3 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    ret = run(f'clang++ -c {c_file} -o {opt_obj}    -O3 -s {CCFLAGS}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
     if ret.returncode != 0:
       raise
     ret = run(f'objcopy  --remove-section .eh_frame --remove-section .note.GNU-stack --remove-section .comment --remove-section .llvm_addrsig {unopt_obj}'.split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -56,7 +56,7 @@ def gen_sentencepiece_training_data():
   num_threads = multiprocessing.cpu_count()
 
   # Total programs to generate
-  total_programs = 20000
+  total_programs = 10000
 
   # Split workload across threads
   programs_per_thread = total_programs // num_threads
@@ -176,7 +176,7 @@ def gen_model_training_data_parallel():
       os.remove(dec_file)
 
 if __name__ == '__main__':
-    for i in range(20):
-      gen_model_training_data_parallel()
-    #gen_sentencepiece_training_data()
+    #for i in range(20):
+    #  gen_model_training_data_parallel()
+    gen_sentencepiece_training_data()
     #gen_model_training_data()
