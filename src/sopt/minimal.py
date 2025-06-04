@@ -4,7 +4,10 @@ import torch
 import tqdm
 import sentencepiece as spm
 from torch.optim import AdamW
-
+import threading
+import queue
+from concurrent.futures import ThreadPoolExecutor
+import random
 
 from impl import (
   get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
@@ -14,107 +17,269 @@ from codegen import gen_yarpgen
 
 CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}-{MODEL_SIZE}.pt'
 
-def save_checkpoint(model,  optim, loss):
-  print("saving",CHECKPOINT)
-  torch.save({
-    'model_state_dict': model.state_dict(),
-    'optimizer_state_dict': optim.state_dict(),
-    'loss': loss.item(),},
-    CHECKPOINT)
+def save_checkpoint(model, optim, loss):
+    print("saving", CHECKPOINT)
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optim.state_dict(),
+        'loss': loss.item(),
+    }, CHECKPOINT)
 
 def load_checkpoint(model, optim, loss=0):
-  if os.path.exists(CHECKPOINT):
-    print(f"loading {CHECKPOINT}")
-    checkpoint = torch.load(CHECKPOINT)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optim.load_state_dict(checkpoint['optimizer_state_dict'])
-    loss = checkpoint['loss']
-  return model, optim,  loss
+    if os.path.exists(CHECKPOINT):
+        print(f"loading {CHECKPOINT}")
+        checkpoint = torch.load(CHECKPOINT)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optim.load_state_dict(checkpoint['optimizer_state_dict'])
+        loss = checkpoint['loss']
+    return model, optim, loss
 
 
+class FullDatasetLoader:
+    """Async loader that goes through the entire dataset before repeating."""
+
+    def __init__(self, data_dir, sp_model_path, prefetch_buffer=1000, num_workers=2):
+        self.data_dir = data_dir
+        self.sp_model_path = sp_model_path
+        self.prefetch_buffer = prefetch_buffer
+        self.num_workers = num_workers
+
+        # Queue for processed samples
+        self.sample_queue = queue.Queue(maxsize=prefetch_buffer)
+
+        # Control events
+        self.stop_event = threading.Event()
+        self.epoch_complete = threading.Event()
+
+        # Get all file pairs
+        self.file_pairs = self._get_file_pairs()
+        print(f"Found {len(self.file_pairs)} file pairs")
+
+        # Start background loading
+        self.loader_thread = threading.Thread(target=self._loader_worker)
+        self.loader_thread.daemon = True
+        self.loader_thread.start()
+
+    def _get_file_pairs(self):
+        """Get all encoder/decoder file pairs."""
+        num_gzips = len(os.listdir(self.data_dir))
+        assert num_gzips % 2 == 0
+
+        file_pairs = []
+        for i in range(num_gzips // 2):
+            encoder_gzip = f"{self.data_dir}/encoder_corpus_{i}.txt.gzip"
+            decoder_gzip = f"{self.data_dir}/decoder_corpus_{i}.txt.gzip"
+            file_pairs.append((encoder_gzip, decoder_gzip))
+
+        return file_pairs
+
+    def _process_sample(self, sp, enc_line, dec_line):
+        """Process a single sample and return tensors or None if invalid."""
+        unopt_tokens = tokenize_hexstr(sp, enc_line)
+        opt_tokens = tokenize_hexstr(sp, dec_line)
+
+        # Skip if sequences are too long
+        if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
+            return None
+
+        # Prepare the tokens
+        opt_tokens.insert(0, tkn('DECSTART'))
+        opt_tokens.append(tkn('EOS'))
+
+        mask = [True] * len(unopt_tokens)
+        mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
+        unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
+        opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
+
+        return {
+            'src': torch.tensor([unopt_tokens]).long(),
+            'src_mask': torch.tensor([mask]).bool(),
+            'tgt': torch.tensor([opt_tokens]).long()
+        }
+
+    def _loader_worker(self):
+        """Background worker that loads data from all files."""
+        sp = spm.SentencePieceProcessor(model_file=self.sp_model_path)
+
+        epoch = 0
+        while not self.stop_event.is_set():
+            print(f"Starting epoch {epoch + 1}, processing {len(self.file_pairs)} file pairs...")
+
+            # Optional: shuffle file order each epoch for better randomization
+            file_pairs = self.file_pairs.copy()
+            # random.shuffle(file_pairs)  # Uncomment if you want random file order
+
+            samples_loaded = 0
+            samples_skipped = 0
+
+            for file_idx, (enc_file, dec_file) in enumerate(file_pairs):
+                if self.stop_event.is_set():
+                    break
+
+                print(f"Loading file pair {file_idx + 1}/{len(file_pairs)}: {os.path.basename(enc_file)}")
+
+                try:
+                    with gzip.open(enc_file, 'rt') as f, gzip.open(dec_file, 'rt') as g:
+                        for line_num, (enc_line, dec_line) in enumerate(zip(f, g)):
+                            if self.stop_event.is_set():
+                                break
+
+                            # Process the sample
+                            sample = self._process_sample(sp, enc_line.strip(), dec_line.strip())
+
+                            if sample is None:
+                                samples_skipped += 1
+                                continue
+
+                            # Put sample in queue (this will block if queue is full)
+                            try:
+                                self.sample_queue.put(sample, timeout=1)
+                                samples_loaded += 1
+
+                                # Print progress occasionally
+                                if samples_loaded % 10000 == 0:
+                                    print(f"  Loaded {samples_loaded} samples from file {file_idx + 1}")
+
+                            except queue.Full:
+                                # Training is slower than loading, which is good
+                                if not self.stop_event.is_set():
+                                    self.sample_queue.put(sample)  # Block until space available
+                                    samples_loaded += 1
+
+                except Exception as e:
+                    print(f"Error loading {enc_file}: {e}")
+                    continue
+
+            print(f"Epoch {epoch + 1} complete: {samples_loaded} samples loaded, {samples_skipped} skipped")
+            epoch += 1
+
+            # Signal that we've completed a full pass through the dataset
+            self.epoch_complete.set()
+            self.epoch_complete.clear()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        """Get the next sample from the queue."""
+        try:
+            sample = self.sample_queue.get(timeout=30)  # 30 second timeout
+            return sample['src'], sample['src_mask'], sample['tgt']
+        except queue.Empty:
+            if self.stop_event.is_set():
+                raise StopIteration
+            else:
+                # This shouldn't happen unless there's an issue with the loader
+                print("Warning: Queue empty but loader should be running")
+                raise StopIteration
+
+    def stop(self):
+        """Stop the background loader."""
+        print("Stopping data loader...")
+        self.stop_event.set()
+        self.loader_thread.join(timeout=5)
+
+    def get_queue_size(self):
+        """Get current queue size for monitoring."""
+        return self.sample_queue.qsize()
 
 
-def cycle(sp):
-  """Generator that yields batches of data directly from gzip files."""
-  while True:
-    num_gzips = len(os.listdir(f"{HOMEDIR}/superopt_data/"))
-    assert num_gzips % 2 == 0
-    for i in range(num_gzips // 2):
-      encoder_gzip = f"{HOMEDIR}/superopt_data/encoder_corpus_{i}.txt.gzip"
-      decoder_gzip = f"{HOMEDIR}/superopt_data/decoder_corpus_{i}.txt.gzip"
-      print("loading ",encoder_gzip, decoder_gzip)
-      with gzip.open(encoder_gzip, 'rt') as f, gzip.open(decoder_gzip, 'rt') as g:
-        for enc_line, dec_line in zip(f, g):
-
-          unopt_tokens = tokenize_hexstr(sp, enc_line)
-          opt_tokens = tokenize_hexstr(sp, dec_line)
-
-          # Skip if sequences are too long
-          if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
-            print("skipping... unopt len {} opt len {} orig unopt len {} orig opt len {}".format(len(unopt_tokens), len(opt_tokens), len(enc_line), len(dec_line)))
-            continue
-          # Prepare the tokens
-          opt_tokens.insert(0, tkn('DECSTART'))
-          opt_tokens.append(tkn('EOS'))
-          mask = [True] * len(unopt_tokens)
-          mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
-          unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
-          opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
-
-          mysrc = torch.tensor([unopt_tokens]).long().to('cuda')
-          mytgt = torch.tensor([opt_tokens]).long().to('cuda')
-          mysrc_mask = torch.tensor([mask]).bool().to('cuda')
-          yield mysrc, mysrc_mask, mytgt
 
 
 @timeit
 def train():
-  sp = spm.SentencePieceProcessor(model_file=f'{ROOTDIR}/misc/superopt.model')
+    sp_model_path = f'{ROOTDIR}/misc/superopt.model'
+    data_dir = f"{HOMEDIR}/superopt_data/"
 
-  model = get_model(tkn('PAD'))
-  report_model_size(model)
-  optim = AdamW(model.parameters(), lr=LEARNING_RATE)
-  scaler = torch.amp.GradScaler('cuda')
-  scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim,T_0=100)
-  model, optim, loss = load_checkpoint(model, optim)
-  data_generator = cycle(sp)
-  for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
-    model.train()
+    # Choose loading strategy
+    use_full_async = True  # True for queue-based, False for buffered
 
-    for __ in range(GRADIENT_ACCUMULATE_EVERY):
-      src, src_mask, tgt = next(data_generator)
-      with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-        loss = model(src, tgt, mask=src_mask)
-        scaler.scale(loss / GRADIENT_ACCUMULATE_EVERY).backward()
+    data_loader = FullDatasetLoader(
+        data_dir,
+        sp_model_path,
+        prefetch_buffer=10000,  # How many samples to keep in queue
+        num_workers=8
+    )
 
-    print(f'{i}: {loss.item()}')
-    scaler.step(optim)
-    scaler.update()
-    scheduler.step(i/NUM_BATCHES)
-    optim.zero_grad()
 
-    if i % CHECKPOINT_EVERY == 0:
-      report_cuda_size()
-      if i > 0:
-        save_checkpoint(model, optim, loss)
-    if i % GENERATE_EVERY == 0:
-        model.eval()
-        src, src_mask, tgt  = next(data_generator)
-        src, src_mask, tgt  = src[:1], src_mask[:1], tgt[:1]
-        start_tokens = torch.tensor([tkn('DECSTART')]).to('cuda')
-        sample = model.generate(src, start_tokens, DEC_SEQ_LEN, eos_token=tkn('EOS'), mask = src_mask)
-        print_stmt = ""
-        print_stmt += f"\ninput tokenized:  \n{detokenize_bytes(sp, src.tolist()[0])} \n"
-        print_stmt += f"\npredicted detokenized:  \n{detokenize_bytes(sp, sample.tolist())}\n"
-        print_stmt += f"\nactual detokenized:     \n{detokenize_bytes(sp, tgt.tolist()[0])}\n"
-        print(print_stmt)
+    data_iter = iter(data_loader)
+
+    model = get_model(tkn('PAD'))
+    report_model_size(model)
+    optim = AdamW(model.parameters(), lr=LEARNING_RATE)
+    scaler = torch.amp.GradScaler('cuda')
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=100)
+    model, optim, loss = load_checkpoint(model, optim)
+
+    print("Starting training with full dataset async loading...")
+
+    for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
+        model.train()
+
+        for __ in range(GRADIENT_ACCUMULATE_EVERY):
+            try:
+                src, src_mask, tgt = next(data_iter)
+                src = src.to('cuda', non_blocking=True)
+                src_mask = src_mask.to('cuda', non_blocking=True)
+                tgt = tgt.to('cuda', non_blocking=True)
+            except StopIteration:
+                # This shouldn't happen with infinite cycling, but just in case
+                print("Data iterator exhausted unexpectedly, restarting...")
+                data_iter = iter(data_loader)
+                src, src_mask, tgt = next(data_iter)
+                src = src.to('cuda', non_blocking=True)
+                src_mask = src_mask.to('cuda', non_blocking=True)
+                tgt = tgt.to('cuda', non_blocking=True)
+
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                loss = model(src, tgt, mask=src_mask)
+                scaler.scale(loss / GRADIENT_ACCUMULATE_EVERY).backward()
+
+        print(f'{i}: {loss.item()}')
+
+        # Optional: print queue size for monitoring
+        if use_full_async and i % 100 == 0:
+            print(f"  Queue size: {data_loader.get_queue_size()}")
+
+        scaler.step(optim)
+        scaler.update()
+        scheduler.step(i/NUM_BATCHES)
+        optim.zero_grad()
+
+        if i % CHECKPOINT_EVERY == 0:
+            report_cuda_size()
+            if i > 0:
+                save_checkpoint(model, optim, loss)
+
+        if i % GENERATE_EVERY == 0:
+            model.eval()
+            # Get a sample for generation
+            src, src_mask, tgt = next(data_iter)
+            src = src[:1].to('cuda', non_blocking=True)
+            src_mask = src_mask[:1].to('cuda', non_blocking=True)
+            tgt = tgt[:1].to('cuda', non_blocking=True)
+
+            start_tokens = torch.tensor([tkn('DECSTART')]).to('cuda')
+            sample = model.generate(src, start_tokens, DEC_SEQ_LEN, eos_token=tkn('EOS'), mask=src_mask)
+
+            sp = spm.SentencePieceProcessor(model_file=sp_model_path)
+            print_stmt = ""
+            print_stmt += f"\ninput tokenized:  \n{detokenize_bytes(sp, src.tolist()[0])} \n"
+            print_stmt += f"\npredicted detokenized:  \n{detokenize_bytes(sp, sample.tolist())}\n"
+            print_stmt += f"\nactual detokenized:     \n{detokenize_bytes(sp, tgt.tolist()[0])}\n"
+            print(print_stmt)
+
+    # Clean up
+    if use_full_async:
+        data_loader.stop()
 
 
 def main():
     train()
 
+
 if __name__ == '__main__':
-  torch.set_float32_matmul_precision('medium')
-  torch.backends.cudnn.benchmark = True
-  torch.backends.cuda.matmul.allow_tf32 = True
-  main()
+    torch.set_float32_matmul_precision('medium')
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    main()
