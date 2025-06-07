@@ -32,10 +32,21 @@ elif '4090' in torch.cuda.get_device_name():
   GRADIENT_ACCUMULATE_EVERY = 16
 elif 'H100' in torch.cuda.get_device_name():
   MODEL_SIZE = 'large'
-  ENC_SEQ_LEN = 4096
-  DEC_SEQ_LEN = 4096
-  BATCH_SIZE = 6
-  GRADIENT_ACCUMULATE_EVERY = 16
+  ENC_SEQ_LEN = 2048
+  DEC_SEQ_LEN = 2048
+
+  if ENC_SEQ_LEN == DEC_SEQ_LEN == 8192:
+    BATCH_SIZE = 1
+    GRADIENT_ACCUMULATE_EVERY = 16
+  elif ENC_SEQ_LEN == DEC_SEQ_LEN == 4096:
+    BATCH_SIZE = 6
+    GRADIENT_ACCUMULATE_EVERY = 16
+  elif ENC_SEQ_LEN == DEC_SEQ_LEN == 2048:
+    BATCH_SIZE = 18
+    GRADIENT_ACCUMULATE_EVERY = 16
+  elif ENC_SEQ_LEN == DEC_SEQ_LEN == 1024:
+    BATCH_SIZE = 32
+    GRADIENT_ACCUMULATE_EVERY = 32
 
 
 def get_model(pad_value):

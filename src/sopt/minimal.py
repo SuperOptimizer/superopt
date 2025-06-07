@@ -233,10 +233,19 @@ def train():  # Add configurable batch size parameter
     # Choose loading strategy
     use_full_async = True  # True for queue-based, False for buffered
 
+    if ENC_SEQ_LEN == 8192:
+        prefetch_buffer = 256
+    elif ENC_SEQ_LEN == 4096:
+        prefetch_buffer = 1024
+    elif ENC_SEQ_LEN == 2048:
+        prefetch_buffer = 8192
+    elif ENC_SEQ_LEN == 1024:
+        prefetch_buffer = 32768
+
     data_loader = FullDatasetLoader(
         data_dir,
         sp_model_path,
-        prefetch_buffer=1000,  # How many samples to keep in queue
+        prefetch_buffer=prefetch_buffer,  # How many samples to keep in queue
         num_workers=16
     )
 
