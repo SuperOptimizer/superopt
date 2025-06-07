@@ -233,7 +233,7 @@ def train():  # Add configurable batch size parameter
     # Choose loading strategy
     use_full_async = True  # True for queue-based, False for buffered
 
-    if ENC_SEQ_LEN == 8192:
+    if ENC_SEQ_LEN == 8192 - 1024:
         prefetch_buffer = 256
     elif ENC_SEQ_LEN == 4096:
         prefetch_buffer = 1024
