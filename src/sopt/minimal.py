@@ -9,8 +9,11 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 import random
 
+from torchao.optim import _AdamW, AdamW4bit
+from torchao.optim import CPUOffloadOptimizer
+
 from impl import (
-  get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
+  get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE, BATCH_SIZE,
    GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, GRADIENT_ACCUMULATE_EVERY, HOMEDIR)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 from codegen import gen_yarpgen
@@ -92,9 +95,9 @@ class FullDatasetLoader:
         opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
 
         return {
-            'src': torch.tensor([unopt_tokens]).long(),
-            'src_mask': torch.tensor([mask]).bool(),
-            'tgt': torch.tensor([opt_tokens]).long()
+            'src': torch.tensor([unopt_tokens]).long().pin_memory(),
+            'src_mask': torch.tensor([mask]).bool().pin_memory(),
+            'tgt': torch.tensor([opt_tokens]).long().pin_memory()
         }
 
     def _loader_worker(self):
@@ -185,9 +188,23 @@ class FullDatasetLoader:
 
 
 
+def collect_batch(data_iter, batch_size):
+    """Collect multiple samples from data iterator and concatenate into a batch."""
+    batch_src, batch_mask, batch_tgt = [], [], []
+
+    for _ in range(batch_size):
+        src, src_mask, tgt = next(data_iter)
+        batch_src.append(src)
+        batch_mask.append(src_mask)
+        batch_tgt.append(tgt)
+
+    return (torch.cat(batch_src, dim=0),
+            torch.cat(batch_mask, dim=0),
+            torch.cat(batch_tgt, dim=0))
+
 
 @timeit
-def train():
+def train(batch_size=1):  # Add configurable batch size parameter
     sp_model_path = f'{ROOTDIR}/misc/superopt.model'
     data_dir = f"{HOMEDIR}/superopt_data/"
 
@@ -198,21 +215,21 @@ def train():
         data_dir,
         sp_model_path,
         prefetch_buffer=1000,  # How many samples to keep in queue
-        num_workers=8
+        num_workers=16
     )
-
 
     data_iter = iter(data_loader)
 
     model = get_model(tkn('PAD'))
     report_model_size(model)
-    optim = AdamW(model.parameters(), lr=LEARNING_RATE)
-    scaler = torch.amp.GradScaler('cuda')
+    optim = _AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=100)
     model, optim, loss = load_checkpoint(model, optim)
+
+    # Prime the iterator
     next(data_iter)
 
-    print("Starting training with full dataset async loading...")
+    print(f"Starting training with batch size {batch_size} and full dataset async loading...")
 
     # Start timing and iteration counting
     import time
@@ -220,42 +237,61 @@ def train():
     iteration_count = 0
     losses = []
 
+    # Helper function to safely collect batch with iterator restart handling
+    def safe_collect_batch(data_iter, batch_size):
+        batch_src, batch_mask, batch_tgt = [], [], []
+
+        for _ in range(batch_size):
+            try:
+                src, src_mask, tgt = next(data_iter)
+                batch_src.append(src)
+                batch_mask.append(src_mask)
+                batch_tgt.append(tgt)
+            except StopIteration:
+                # Handle iterator exhaustion - restart and continue collecting
+                print("Data iterator exhausted during batch collection, restarting...")
+                data_iter = iter(data_loader)
+                src, src_mask, tgt = next(data_iter)
+                batch_src.append(src)
+                batch_mask.append(src_mask)
+                batch_tgt.append(tgt)
+
+        return (torch.cat(batch_src, dim=0),
+                torch.cat(batch_mask, dim=0),
+                torch.cat(batch_tgt, dim=0)), data_iter
+
     for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='\ntraining'):
         model.train()
 
         for __ in range(GRADIENT_ACCUMULATE_EVERY):
-            try:
-                src, src_mask, tgt = next(data_iter)
-                src = src.to('cuda', non_blocking=True)
-                src_mask = src_mask.to('cuda', non_blocking=True)
-                tgt = tgt.to('cuda', non_blocking=True)
-            except StopIteration:
-                # This shouldn't happen with infinite cycling, but just in case
-                print("Data iterator exhausted unexpectedly, restarting...")
-                data_iter = iter(data_loader)
-                src, src_mask, tgt = next(data_iter)
-                src = src.to('cuda', non_blocking=True)
-                src_mask = src_mask.to('cuda', non_blocking=True)
-                tgt = tgt.to('cuda', non_blocking=True)
+            # Collect a batch of samples
+            (src, src_mask, tgt), data_iter = safe_collect_batch(data_iter, batch_size)
 
-            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-                loss = model(src, tgt, mask=src_mask)
-                scaler.scale(loss / GRADIENT_ACCUMULATE_EVERY).backward()
+            # Move to GPU
+            src = src.to('cuda', non_blocking=True)
+            src_mask = src_mask.to('cuda', non_blocking=True)
+            tgt = tgt.to('cuda', non_blocking=True)
+
+            loss = model(src, tgt, mask=src_mask)
+            (loss / (GRADIENT_ACCUMULATE_EVERY * batch_size)).backward()
+
             iteration_count += 1
 
         # Calculate and report iterations per second
         elapsed_time = time.time() - start_time
         iterations_per_sec = iteration_count / elapsed_time
 
-        print(f'\n{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s')
+        print(f'\n{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s | batch_size: {batch_size}')
         losses.append(loss.item())
         print(f"avg loss {sum(losses) / (i+1)}")
+
         # Optional: print queue size for monitoring
         if use_full_async and i % 100 == 0:
             print(f"  Queue size: {data_loader.get_queue_size()}")
 
-        scaler.step(optim)
-        scaler.update()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        optim.step()
         scheduler.step(i/NUM_BATCHES)
         optim.zero_grad()
 
@@ -266,11 +302,11 @@ def train():
 
         if i % GENERATE_EVERY == 0:
             model.eval()
-            # Get a sample for generation
-            src, src_mask, tgt = next(data_iter)
-            src = src[:1].to('cuda', non_blocking=True)
-            src_mask = src_mask[:1].to('cuda', non_blocking=True)
-            tgt = tgt[:1].to('cuda', non_blocking=True)
+            # Get a sample for generation (just use first sample from a batch)
+            (src, src_mask, tgt), data_iter = safe_collect_batch(data_iter, 1)
+            src = src.to('cuda', non_blocking=True)
+            src_mask = src_mask.to('cuda', non_blocking=True)
+            tgt = tgt.to('cuda', non_blocking=True)
 
             start_tokens = torch.tensor([tkn('DECSTART')]).to('cuda')
             sample = model.generate(src, start_tokens, DEC_SEQ_LEN, eos_token=tkn('EOS'), mask=src_mask)
@@ -288,11 +324,17 @@ def train():
 
 
 def main():
-    train()
+    train(batch_size=BATCH_SIZE)
 
 
 if __name__ == '__main__':
     torch.set_float32_matmul_precision('medium')
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+    torch.backends.cuda.enable_fp8 = True
+    torch.backends.cuda.enable_flash_sdp(True)  # Ensure flash attention
+    torch.backends.cuda.enable_math_sdp(False)   # Disable slower attention
+    torch.backends.cuda.enable_mem_efficient_sdp(False)  # Disable memory-efficient but slower attention
     main()

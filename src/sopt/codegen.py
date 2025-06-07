@@ -175,8 +175,107 @@ def gen_model_training_data_parallel():
       os.remove(enc_file)
       os.remove(dec_file)
 
+def gen_model_training_data_direct(samples_per_thread=1000):
+    """
+    Generate training data where each thread writes to /tmp, then copies to final location.
+    This ensures atomic file operations and prevents corruption.
+    """
+    import concurrent.futures
+    import multiprocessing
+    import threading
+    import shutil
+    import time
+
+    # Determine available CPU threads
+    num_threads = multiprocessing.cpu_count()
+
+    os.makedirs(f"{HOMEDIR}/superopt_data", exist_ok=True)
+    os.makedirs(TMP, exist_ok=True)
+
+    # Thread-safe counter for file numbering
+    file_counter_lock = threading.Lock()
+    file_counter = [len([f for f in os.listdir(f"{HOMEDIR}/superopt_data") if f.endswith('.txt.gzip')]) // 2]
+
+    def get_next_file_number():
+        with file_counter_lock:
+            num = file_counter[0]
+            file_counter[0] += 1
+            return num
+
+    def generate_thread_data(thread_id):
+        """Each thread generates gzip files in /tmp, then copies to final location"""
+        file_num = get_next_file_number()
+
+        # Create unique temp files to avoid conflicts
+        timestamp = int(time.time() * 1000000)  # microsecond precision
+        temp_encoder = f"{TMP}/temp_encoder_{timestamp}_{thread_id}_{file_num}.txt.gzip"
+        temp_decoder = f"{TMP}/temp_decoder_{timestamp}_{thread_id}_{file_num}.txt.gzip"
+
+        # Final destination files
+        final_encoder = f"{HOMEDIR}/superopt_data/encoder_corpus_{file_num}.txt.gzip"
+        final_decoder = f"{HOMEDIR}/superopt_data/decoder_corpus_{file_num}.txt.gzip"
+
+        print(f"Thread {thread_id}: Generating {samples_per_thread} samples for file {file_num}")
+
+        try:
+            # Write to temporary files
+            with gzip.open(temp_encoder, 'wt') as f_enc, gzip.open(temp_decoder, 'wt') as f_dec:
+                for i, pair in enumerate(gen_yarpgen(thread_id, samples_per_thread)):
+                    unopt, opt = pair
+                    f_enc.write(bytes_to_hex_string(unopt) + "\n")
+                    f_dec.write(bytes_to_hex_string(opt) + "\n")
+
+                    # Optional: print progress every 100 samples
+                    if (i + 1) % 100 == 0:
+                        print(f"Thread {thread_id}: Generated {i + 1}/{samples_per_thread} samples")
+
+            # Atomically move completed files to final location
+            print(f"Thread {thread_id}: Moving files to final location...")
+            shutil.move(temp_encoder, final_encoder)
+            shutil.move(temp_decoder, final_decoder)
+
+            print(f"Thread {thread_id}: Completed {samples_per_thread} samples -> {final_encoder}, {final_decoder}")
+            return (final_encoder, final_decoder)
+
+        except Exception as e:
+            # Clean up temp files on error
+            print(f"Thread {thread_id}: Error occurred: {e}")
+            for temp_file in [temp_encoder, temp_decoder]:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    print(f"Thread {thread_id}: Cleaned up {temp_file}")
+            raise
+
+    print(f"Starting parallel generation with {num_threads} threads, {samples_per_thread} samples each...")
+
+    # Run all threads in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(generate_thread_data, i) for i in range(num_threads)]
+        results = [future.result() for future in concurrent.futures.as_completed(futures)]
+
+    print(f"Generation complete! Created {len(results)} pairs of gzip files.")
+    return results
+
+
+def generate_multiple_batches(num_batches=200, samples_per_thread=1000):
+    """
+    Generate M batches of gzip files by calling the direct generation function.
+    """
+    print(f"Generating {num_batches} batches with {samples_per_thread} samples per thread...")
+
+    for batch in range(num_batches):
+        print(f"\n=== Starting batch {batch + 1}/{num_batches} ===")
+        gen_model_training_data_direct(samples_per_thread)
+        print(f"=== Completed batch {batch + 1}/{num_batches} ===")
+
+    print(f"\nAll {num_batches} batches completed!")
+
+
+
+
 if __name__ == '__main__':
-    for i in range(200):
-      gen_model_training_data_parallel()
+    #for i in range(200):
+    #  gen_model_training_data_parallel()
+    generate_multiple_batches(num_batches=200, samples_per_thread=1000)
     #gen_sentencepiece_training_data()
     #gen_model_training_data()
