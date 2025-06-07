@@ -20,31 +20,14 @@ NUM_TOKENS = 8192
 NUM_SPECIAL_TOKENS = 3
 NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 
-ENC_SEQ_LEN = 2048
-DEC_SEQ_LEN = 2048
+ENC_SEQ_LEN = 3072
+DEC_SEQ_LEN = 3072
 GENERATE_EVERY = 100
 CHECKPOINT_EVERY = 100
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
-BATCH_SIZE = 4
-GRADIENT_ACCUMULATE_EVERY = 32
-
-
-def module_filter_fn(mod: torch.nn.Module, fqn: str):
-  # don't convert the last module
-  if "attn" not in fqn:
-    return False
-  if "logit" in fqn:
-    return False
-  if fqn == "1":
-    return False
-  # don't convert linear modules with weight dimensions not divisible by 16
-  if isinstance(mod, torch.nn.Linear):
-    if mod.in_features == 3072:
-      return True
-    if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
-      return False
-  return False
+BATCH_SIZE = 128
+GRADIENT_ACCUMULATE_EVERY = 4
 
 
 def get_model(pad_value):

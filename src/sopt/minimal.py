@@ -107,7 +107,7 @@ class FullDatasetLoader:
 
             # Optional: shuffle file order each epoch for better randomization
             file_pairs = self.file_pairs.copy()
-            # random.shuffle(file_pairs)  # Uncomment if you want random file order
+            random.shuffle(file_pairs)  # Uncomment if you want random file order
 
             samples_loaded = 0
             samples_skipped = 0
@@ -218,8 +218,9 @@ def train():
     import time
     start_time = time.time()
     iteration_count = 0
+    losses = []
 
-    for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
+    for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='\ntraining'):
         model.train()
 
         for __ in range(GRADIENT_ACCUMULATE_EVERY):
@@ -246,8 +247,9 @@ def train():
         elapsed_time = time.time() - start_time
         iterations_per_sec = iteration_count / elapsed_time
 
-        print(f'{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s')
-
+        print(f'\n{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s')
+        losses.append(loss.item())
+        print(f"avg loss {sum(losses) / (i+1)}")
         # Optional: print queue size for monitoring
         if use_full_async and i % 100 == 0:
             print(f"  Queue size: {data_loader.get_queue_size()}")
