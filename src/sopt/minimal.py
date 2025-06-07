@@ -202,9 +202,31 @@ def collect_batch(data_iter, batch_size):
             torch.cat(batch_mask, dim=0),
             torch.cat(batch_tgt, dim=0))
 
+def count_tokens_in_batch(src, tgt, pad_token_id):
+    """Count non-padding tokens in source and target tensors."""
+    src_tokens = (src != pad_token_id).sum().item()
+    tgt_tokens = (tgt != pad_token_id).sum().item()
+    return src_tokens + tgt_tokens
+
+def format_token_rates(total_tokens, elapsed_time):
+    """Calculate and format token processing rates."""
+    if elapsed_time == 0:
+        return "0 tokens/sec"
+
+    tokens_per_sec = total_tokens / elapsed_time
+    tokens_per_min = tokens_per_sec * 60
+    tokens_per_hour = tokens_per_sec * 3600
+    tokens_per_day = tokens_per_sec * 86400
+
+    return {
+        'per_sec': f"{tokens_per_sec:.0f}",
+        'per_min': f"{tokens_per_min:.0f}",
+        'per_hour': f"{tokens_per_hour:.0f}",
+        'per_day': f"{tokens_per_day:.0f}"
+    }
 
 @timeit
-def train(batch_size=1):  # Add configurable batch size parameter
+def train():  # Add configurable batch size parameter
     sp_model_path = f'{ROOTDIR}/misc/superopt.model'
     data_dir = f"{HOMEDIR}/superopt_data/"
 
@@ -229,19 +251,20 @@ def train(batch_size=1):  # Add configurable batch size parameter
     # Prime the iterator
     next(data_iter)
 
-    print(f"Starting training with batch size {batch_size} and full dataset async loading...")
+    print(f"Starting training with batch size {BATCH_SIZE} and full dataset async loading...")
 
     # Start timing and iteration counting
     import time
     start_time = time.time()
     iteration_count = 0
+    total_tokens_processed = 0
     losses = []
 
     # Helper function to safely collect batch with iterator restart handling
-    def safe_collect_batch(data_iter, batch_size):
+    def safe_collect_batch(data_iter, BATCH_SIZE):
         batch_src, batch_mask, batch_tgt = [], [], []
 
-        for _ in range(batch_size):
+        for _ in range(BATCH_SIZE):
             try:
                 src, src_mask, tgt = next(data_iter)
                 batch_src.append(src)
@@ -265,7 +288,11 @@ def train(batch_size=1):  # Add configurable batch size parameter
 
         for __ in range(GRADIENT_ACCUMULATE_EVERY):
             # Collect a batch of samples
-            (src, src_mask, tgt), data_iter = safe_collect_batch(data_iter, batch_size)
+            (src, src_mask, tgt), data_iter = safe_collect_batch(data_iter, BATCH_SIZE)
+
+            # Count tokens in this batch (before moving to GPU)
+            batch_tokens = count_tokens_in_batch(src, tgt, tkn('PAD'))
+            total_tokens_processed += batch_tokens
 
             # Move to GPU
             src = src.to('cuda', non_blocking=True)
@@ -273,15 +300,16 @@ def train(batch_size=1):  # Add configurable batch size parameter
             tgt = tgt.to('cuda', non_blocking=True)
 
             loss = model(src, tgt, mask=src_mask)
-            (loss / (GRADIENT_ACCUMULATE_EVERY * batch_size)).backward()
+            (loss / (GRADIENT_ACCUMULATE_EVERY * BATCH_SIZE)).backward()
 
             iteration_count += 1
 
         # Calculate and report iterations per second
         elapsed_time = time.time() - start_time
         iterations_per_sec = iteration_count / elapsed_time
-
-        print(f'\n{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s | batch_size: {batch_size}')
+        token_rates = format_token_rates(total_tokens_processed, elapsed_time)
+        print(f'\nTokens: {total_tokens_processed:,} total | {token_rates["per_sec"]} tok/s | {token_rates["per_min"]} tok/min | {token_rates["per_hour"]} tok/hr | {token_rates["per_day"]} tok/day')
+        print(f'\n{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s | batch_size: {BATCH_SIZE}')
         losses.append(loss.item())
         print(f"avg loss {sum(losses) / (i+1)}")
 
@@ -324,7 +352,7 @@ def train(batch_size=1):  # Add configurable batch size parameter
 
 
 def main():
-    train(batch_size=BATCH_SIZE)
+    train()
 
 
 if __name__ == '__main__':

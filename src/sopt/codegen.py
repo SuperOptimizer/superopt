@@ -276,6 +276,6 @@ def generate_multiple_batches(num_batches=200, samples_per_thread=1000):
 if __name__ == '__main__':
     #for i in range(200):
     #  gen_model_training_data_parallel()
-    generate_multiple_batches(num_batches=200, samples_per_thread=1000)
+    generate_multiple_batches(num_batches=20000, samples_per_thread=1000)
     #gen_sentencepiece_training_data()
     #gen_model_training_data()
