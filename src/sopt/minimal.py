@@ -108,22 +108,20 @@ def token_based_training_step(model, data_iter, optimizer, target_tokens_per_upd
 
     return accumulated_loss, accumulated_tokens, num_micro_batches, total_actual_tokens
 
-def save_checkpoint(model, optim, loss):
+def save_checkpoint(model, optim):
     print("saving", CHECKPOINT)
     torch.save({
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optim.state_dict(),
-        'loss': loss.item(),
     }, CHECKPOINT)
 
-def load_checkpoint(model, optim, loss=0):
+def load_checkpoint(model, optim):
     if os.path.exists(CHECKPOINT):
         print(f"loading {CHECKPOINT}")
         checkpoint = torch.load(CHECKPOINT)
         model.load_state_dict(checkpoint['model_state_dict'])
         optim.load_state_dict(checkpoint['optimizer_state_dict'])
-        loss = checkpoint['loss']
-    return model, optim, loss
+    return model, optim
 
 
 class FixedBucketRandomCollector:
@@ -562,7 +560,7 @@ def train():
 
     optim = _AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=100)
-    model, optim, loss = load_checkpoint(model, optim)
+    model, optim = load_checkpoint(model, optim)
 
     print(f"Starting training with token-based gradient accumulation")
     print(f"  Buckets: {batch_collector.bucket_lengths}")
@@ -633,7 +631,7 @@ def train():
         report_cuda_size()
 
         if i % CHECKPOINT_EVERY == 0 and i > 0:
-            save_checkpoint(model, optim, loss)
+            save_checkpoint(model, optim)
 
         if i % GENERATE_EVERY == 0 and i > 0:
             model.eval()
