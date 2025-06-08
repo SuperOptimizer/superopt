@@ -82,7 +82,7 @@ class FullDatasetLoader:
         opt_tokens = tokenize_hexstr(sp, dec_line)
 
         # Skip if sequences are too long
-        if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) >= DEC_SEQ_LEN:
+        if len(unopt_tokens)+2 >= ENC_SEQ_LEN or len(opt_tokens)+2 >= DEC_SEQ_LEN:
             return None
 
         # Prepare the tokens
@@ -309,7 +309,7 @@ def train():  # Add configurable batch size parameter
             tgt = tgt.to('cuda', non_blocking=True)
 
             loss = model(src, tgt, mask=src_mask)
-            (loss / (GRADIENT_ACCUMULATE_EVERY * BATCH_SIZE)).backward()
+            (loss / (GRADIENT_ACCUMULATE_EVERY)).backward()
 
             iteration_count += 1
 
