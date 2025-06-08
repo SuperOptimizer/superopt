@@ -3,6 +3,7 @@ import os
 from x_transformers import XTransformer
 import torch
 
+torch._dynamo.config.recompile_limit = 64
 
 ROOTDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..'))
 HOMEDIR = os.path.abspath(os.path.expanduser("~"))
@@ -17,36 +18,19 @@ LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
 GENERATE_EVERY = 100
 CHECKPOINT_EVERY = 100
+GRADIENT_ACCUMULATE_EVERY = 16
 
 if '4060' in torch.cuda.get_device_name():
   MODEL_SIZE = 'small'
-  ENC_SEQ_LEN = 4096
-  DEC_SEQ_LEN = 4096
-  BATCH_SIZE= 4
-  GRADIENT_ACCUMULATE_EVERY = 16
+  ENC_SEQ_LEN = DEC_SEQ_LEN = 4096
 elif '4090' in torch.cuda.get_device_name():
   MODEL_SIZE = 'medium'
-  ENC_SEQ_LEN = 4096
-  DEC_SEQ_LEN = 4096
-  BATCH_SIZE= 4
-  GRADIENT_ACCUMULATE_EVERY = 16
+  ENC_SEQ_LEN = DEC_SEQ_LEN = 4096
 elif 'H100' in torch.cuda.get_device_name():
   MODEL_SIZE = 'large'
-  #ENC_SEQ_LEN = DEC_SEQ_LEN = 8192 - 1024
-  ENC_SEQ_LEN = DEC_SEQ_LEN = 4096
+  ENC_SEQ_LEN = DEC_SEQ_LEN = 8192
+  BATCH_SIZES = {8192-2048: 2, 4096: 4, 2048: 16, 1024: 32}
 
-  if ENC_SEQ_LEN == DEC_SEQ_LEN == 8192 - 1024:
-    BATCH_SIZE = 2
-    GRADIENT_ACCUMULATE_EVERY = 16
-  elif ENC_SEQ_LEN == DEC_SEQ_LEN == 4096:
-    BATCH_SIZE = 6
-    GRADIENT_ACCUMULATE_EVERY = 16
-  elif ENC_SEQ_LEN == DEC_SEQ_LEN == 2048:
-    BATCH_SIZE = 18
-    GRADIENT_ACCUMULATE_EVERY = 16
-  elif ENC_SEQ_LEN == DEC_SEQ_LEN == 1024:
-    BATCH_SIZE = 32
-    GRADIENT_ACCUMULATE_EVERY = 32
 
 
 def get_model(pad_value):
@@ -65,11 +49,12 @@ def get_model(pad_value):
     enc_max_seq_len=ENC_SEQ_LEN,
     enc_use_simple_rmsnorm=True,
     enc_ff_no_bias=True,
-    enc_ff_swish=True,
-    enc_ff_glu=True,
+    #enc_ff_swish=True,
+    #enc_ff_glu=True,
     enc_ff_relu_squared = True,
     enc_use_abs_pos_emb=False,
     enc_attn_one_kv_head = True,
+    #enc_sandwich_norm = True,
 
     dec_attn_flash=True,
     dec_num_tokens=NUM_TOKENS,
@@ -78,15 +63,16 @@ def get_model(pad_value):
     dec_max_seq_len=DEC_SEQ_LEN,
     dec_use_simple_rmsnorm=True,
     dec_ff_no_bias=True,
-    dec_ff_swish=True,
-    dec_ff_glu=True,
+    #dec_ff_swish=True,
+    #dec_ff_glu=True,
     dec_ff_relu_squared = True,
     dec_use_abs_pos_emb=False,
     dec_attn_one_kv_head = True,
+    dec_sandwich_norm = True,
   )
   model = model.cuda()
   model = model.bfloat16()
-  model = torch.compile(model)
+  model = torch.compile(model,dynamic=True)
   return model
 
 # our tokenization scheme is

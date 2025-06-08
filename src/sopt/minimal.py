@@ -8,13 +8,15 @@ import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor
 import random
+from collections import defaultdict
+import math
 
 from torchao.optim import _AdamW, AdamW4bit
 from torchao.optim import CPUOffloadOptimizer
 
 from impl import (
-  get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE, BATCH_SIZE,
-   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, GRADIENT_ACCUMULATE_EVERY, HOMEDIR)
+  get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
+   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, GRADIENT_ACCUMULATE_EVERY, HOMEDIR, BATCH_SIZES)
 from util import report_cuda_size, timeit, report_model_size, chunkify
 from codegen import gen_yarpgen
 
@@ -38,17 +40,215 @@ def load_checkpoint(model, optim, loss=0):
     return model, optim, loss
 
 
+class FixedBucketRandomCollector:
+    """Collects samples into fixed buckets (1k, 2k, 4k, 8k) with predefined batch sizes and weighted random selection."""
+
+    def __init__(self, batch_sizes_dict, max_enc_len=ENC_SEQ_LEN, max_dec_len=DEC_SEQ_LEN):
+        self.batch_sizes_dict = batch_sizes_dict
+        self.max_enc_len = max_enc_len
+        self.max_dec_len = max_dec_len
+
+        # Get bucket lengths from the batch sizes dictionary
+        self.bucket_lengths = sorted(batch_sizes_dict.keys())
+
+        # Storage for samples
+        self.buckets = {}
+        self.bucket_batch_sizes = {}
+
+        # Set up buckets and batch sizes
+        for bucket_len in self.bucket_lengths:
+            self.bucket_batch_sizes[bucket_len] = batch_sizes_dict[bucket_len]
+            self.buckets[bucket_len] = []
+
+        print(f"Fixed bucket weighted random collector initialized:")
+        print(f"  Selection: Weighted by number of available batches per bucket")
+        print(f"  Bucket batch sizes:")
+        for bucket_len in self.bucket_lengths:
+            batch_size = self.bucket_batch_sizes[bucket_len]
+            print(f"    {bucket_len:4d} tokens: batch_size={batch_size:3d}")
+
+    def get_bucket_for_length(self, actual_length):
+        """Get the appropriate bucket for a given sequence length, or None if too large."""
+        for bucket_len in self.bucket_lengths:
+            if actual_length <= bucket_len:
+                return bucket_len
+        # Return None if sequence is too large for any bucket
+        return None
+
+    def add_sample(self, src_tokens, src_mask, tgt_tokens):
+        """Add a sample to the appropriate bucket, or skip if too large."""
+        # Get actual lengths
+        src_actual_len = len([t for t in src_tokens if t != tkn('PAD')])
+        tgt_actual_len = len([t for t in tgt_tokens if t != tkn('PAD')])
+
+        # Find bucket based on max length needed
+        max_actual_len = max(src_actual_len, tgt_actual_len)
+        bucket_len = self.get_bucket_for_length(max_actual_len)
+
+        # Skip sample if it doesn't fit in any bucket
+        if bucket_len is None:
+            # Optionally log skipped samples (but not too frequently to avoid spam)
+            if not hasattr(self, '_skip_count'):
+                self._skip_count = 0
+            self._skip_count += 1
+
+            if self._skip_count <= 10 or self._skip_count % 1000 == 0:
+                print(f"Skipping sample {self._skip_count}: src_len={src_actual_len}, tgt_len={tgt_actual_len}, max_len={max_actual_len} (exceeds largest bucket {max(self.bucket_lengths)})")
+
+            return None
+
+        # Debug: Print first few samples to verify bucketing logic
+        if not hasattr(self, '_debug_count'):
+            self._debug_count = 0
+
+        if self._debug_count < 5:  # Show first 5 samples
+            print(f"Sample {self._debug_count + 1}: src_len={src_actual_len}, tgt_len={tgt_actual_len}, max_len={max_actual_len} → bucket={bucket_len}")
+            self._debug_count += 1
+
+        sample = {
+            'src': src_tokens,
+            'src_mask': src_mask,
+            'tgt': tgt_tokens,
+            'src_actual_len': src_actual_len,
+            'tgt_actual_len': tgt_actual_len
+        }
+
+        self.buckets[bucket_len].append(sample)
+
+        # Don't return batches immediately - let weighted random selection decide
+        return None
+
+    def get_next_batch_random(self):
+        """Get the next batch using weighted random selection from ready buckets."""
+        # Find all buckets that have enough samples and calculate weights
+        ready_buckets = []
+        weights = []
+
+        for bucket_len in self.bucket_lengths:
+            target_batch_size = self.bucket_batch_sizes[bucket_len]
+            available_samples = len(self.buckets[bucket_len])
+
+            if available_samples >= target_batch_size:
+                ready_buckets.append(bucket_len)
+                # Weight by how many full batches can be made from this bucket
+                num_full_batches = available_samples // target_batch_size
+                weights.append(num_full_batches)
+
+        # If no buckets are ready, return None
+        if not ready_buckets:
+            return None
+
+        # Weighted random selection (buckets with more samples get higher probability)
+        selected_bucket = random.choices(ready_buckets, weights=weights)[0]
+        return self.create_batch_from_bucket(selected_bucket)
+
+    def create_batch_from_bucket(self, bucket_len):
+        """Create a batch from the specified bucket."""
+        target_batch_size = self.bucket_batch_sizes[bucket_len]
+        samples = self.buckets[bucket_len][:target_batch_size]
+        self.buckets[bucket_len] = self.buckets[bucket_len][target_batch_size:]
+
+        batch_src, batch_src_mask, batch_tgt = [], [], []
+        total_actual_tokens = 0  # Count actual tokens before padding
+
+        for sample in samples:
+            # Count actual tokens before any padding
+            actual_src_len = len(sample['src'])
+            actual_tgt_len = len(sample['tgt'])
+            total_actual_tokens += actual_src_len + actual_tgt_len
+
+            src = sample['src']
+            tgt = sample['tgt']
+
+            # Samples should fit in bucket (skipping logic handles oversized samples)
+            # But add a safety check just in case
+            if len(src) > bucket_len or len(tgt) > bucket_len:
+                print(f"WARNING: Sample exceeds bucket size - src:{len(src)}, tgt:{len(tgt)}, bucket:{bucket_len}")
+                continue
+
+            # Pad to bucket length (no trimming needed if bucketing is correct)
+            if len(src) < bucket_len:
+                src_mask = [True] * len(src) + [False] * (bucket_len - len(src))
+                src.extend([tkn('PAD')] * (bucket_len - len(src)))
+            else:
+                src_mask = [True] * bucket_len
+
+            if len(tgt) < bucket_len:
+                tgt.extend([tkn('PAD')] * (bucket_len - len(tgt)))
+
+            batch_src.append(src)
+            batch_src_mask.append(src_mask)
+            batch_tgt.append(tgt)
+
+        return {
+            'src': torch.tensor(batch_src).long(),
+            'src_mask': torch.tensor(batch_src_mask).bool(),
+            'tgt': torch.tensor(batch_tgt).long(),
+            'bucket_len': bucket_len,
+            'batch_size': len(batch_src),
+            'actual_tokens': total_actual_tokens  # Actual tokens before padding
+        }
+
+    def get_pending_batches(self):
+        """Get any remaining partial batches at end of epoch."""
+        batches = []
+        for bucket_len in self.bucket_lengths:
+            if len(self.buckets[bucket_len]) > 0:
+                # Create batch with whatever samples remain
+                samples = self.buckets[bucket_len]
+                self.buckets[bucket_len] = []
+
+                if samples:
+                    # Temporarily override batch size
+                    original_batch_size = self.bucket_batch_sizes[bucket_len]
+                    self.bucket_batch_sizes[bucket_len] = len(samples)
+                    batch = self.create_batch_from_bucket(bucket_len)
+                    self.bucket_batch_sizes[bucket_len] = original_batch_size  # Restore
+
+                    if batch:
+                        batches.append(batch)
+
+        return batches
+
+    def get_bucket_stats(self):
+        """Get statistics about current bucket usage."""
+        stats = {}
+        total_samples = 0
+        for bucket_len in self.bucket_lengths:
+            count = len(self.buckets[bucket_len])
+            target_size = self.bucket_batch_sizes[bucket_len]
+            total_samples += count
+            if count > 0:
+                stats[bucket_len] = {
+                    'samples': count,
+                    'target_batch_size': target_size,
+                    'fill_percentage': (count / target_size) * 100
+                }
+        return stats, total_samples
+
+    def print_bucket_status(self):
+        """Print current status of all buckets."""
+        print("\n=== Bucket Status ===")
+        for bucket_len in self.bucket_lengths:
+            count = len(self.buckets[bucket_len])
+            target = self.bucket_batch_sizes[bucket_len]
+            fill_pct = (count / target) * 100 if target > 0 else 0
+            ready = "READY" if count >= target else "waiting"
+            print(f"  {bucket_len:4d} tokens: {count:3d}/{target:2d} samples ({fill_pct:5.1f}% full) [{ready}]")
+
+
 class FullDatasetLoader:
     """Async loader that goes through the entire dataset before repeating."""
 
-    def __init__(self, data_dir, sp_model_path, prefetch_buffer=1000, num_workers=2):
+    def __init__(self, data_dir, sp_model_path, batch_collector, prefetch_buffer=1000, num_workers=2):
         self.data_dir = data_dir
         self.sp_model_path = sp_model_path
+        self.batch_collector = batch_collector
         self.prefetch_buffer = prefetch_buffer
         self.num_workers = num_workers
 
-        # Queue for processed samples
-        self.sample_queue = queue.Queue(maxsize=prefetch_buffer)
+        # Queue for processed batches
+        self.batch_queue = queue.Queue(maxsize=prefetch_buffer)
 
         # Control events
         self.stop_event = threading.Event()
@@ -77,27 +277,23 @@ class FullDatasetLoader:
         return file_pairs
 
     def _process_sample(self, sp, enc_line, dec_line):
-        """Process a single sample and return tensors or None if invalid."""
+        """Process a single sample and return tokens WITHOUT padding to max length."""
         unopt_tokens = tokenize_hexstr(sp, enc_line)
         opt_tokens = tokenize_hexstr(sp, dec_line)
 
-        # Skip if sequences are too long
-        if len(unopt_tokens)+2 >= ENC_SEQ_LEN or len(opt_tokens)+2 >= DEC_SEQ_LEN:
+        # Skip if sequences would be too long
+        # Source: no special tokens added
+        # Target: DECSTART + EOS tokens will be added (2 tokens)
+        if len(unopt_tokens) >= ENC_SEQ_LEN or len(opt_tokens) + 2 >= DEC_SEQ_LEN:
             return None
 
-        # Prepare the tokens
-        opt_tokens.insert(0, tkn('DECSTART'))
-        opt_tokens.append(tkn('EOS'))
-
-        mask = [True] * len(unopt_tokens)
-        mask.extend([False] * (ENC_SEQ_LEN - len(unopt_tokens)))
-        unopt_tokens.extend([tkn('PAD')] * (ENC_SEQ_LEN - len(unopt_tokens)))
-        opt_tokens.extend([tkn('PAD')] * (DEC_SEQ_LEN - len(opt_tokens)))
+        # Prepare the tokens - add special tokens to target only
+        opt_tokens_with_special = [tkn('DECSTART')] + opt_tokens + [tkn('EOS')]
 
         return {
-            'src': torch.tensor([unopt_tokens]).long().pin_memory(),
-            'src_mask': torch.tensor([mask]).bool().pin_memory(),
-            'tgt': torch.tensor([opt_tokens]).long().pin_memory()
+            'src': unopt_tokens,  # No special tokens
+            'src_mask': None,     # Will be created during batching
+            'tgt': opt_tokens_with_special  # Has DECSTART + original + EOS
         }
 
     def _loader_worker(self):
@@ -108,12 +304,13 @@ class FullDatasetLoader:
         while not self.stop_event.is_set():
             print(f"Starting epoch {epoch + 1}, processing {len(self.file_pairs)} file pairs...")
 
-            # Optional: shuffle file order each epoch for better randomization
+            # Shuffle file order each epoch for better randomization
             file_pairs = self.file_pairs.copy()
-            random.shuffle(file_pairs)  # Uncomment if you want random file order
+            random.shuffle(file_pairs)
 
             samples_loaded = 0
             samples_skipped = 0
+            batches_created = 0
 
             for file_idx, (enc_file, dec_file) in enumerate(file_pairs):
                 if self.stop_event.is_set():
@@ -134,26 +331,47 @@ class FullDatasetLoader:
                                 samples_skipped += 1
                                 continue
 
-                            # Put sample in queue (this will block if queue is full)
-                            try:
-                                self.sample_queue.put(sample, timeout=1)
-                                samples_loaded += 1
+                            # Add to batch collector (doesn't return batch immediately)
+                            self.batch_collector.add_sample(
+                                sample['src'], sample['src_mask'], sample['tgt']
+                            )
 
-                                # Print progress occasionally
-                                if samples_loaded % 10000 == 0:
-                                    print(f"  Loaded {samples_loaded} samples from file {file_idx + 1}")
+                            samples_loaded += 1
 
-                            except queue.Full:
-                                # Training is slower than loading, which is good
-                                if not self.stop_event.is_set():
-                                    self.sample_queue.put(sample)  # Block until space available
-                                    samples_loaded += 1
+                            # Check for ready batches using weighted random selection
+                            batch = self.batch_collector.get_next_batch_random()
+                            if batch is not None:
+                                try:
+                                    self.batch_queue.put(batch, timeout=1)
+                                    batches_created += 1
+                                except queue.Full:
+                                    if not self.stop_event.is_set():
+                                        self.batch_queue.put(batch)  # Block until space available
+                                        batches_created += 1
+
+                            # Print progress occasionally
+                            if samples_loaded % 10000 == 0:
+                                bucket_stats, pending_samples = self.batch_collector.get_bucket_stats()
+                                print(f"  Loaded {samples_loaded} samples, {batches_created} batches created, {pending_samples} pending")
+                                if samples_loaded % 50000 == 0:
+                                    self.batch_collector.print_bucket_status()
 
                 except Exception as e:
                     print(f"Error loading {enc_file}: {e}")
                     continue
 
-            print(f"Epoch {epoch + 1} complete: {samples_loaded} samples loaded, {samples_skipped} skipped")
+            # Handle any remaining partial batches at end of epoch
+            remaining_batches = self.batch_collector.get_pending_batches()
+            for batch in remaining_batches:
+                try:
+                    self.batch_queue.put(batch, timeout=1)
+                    batches_created += 1
+                except queue.Full:
+                    if not self.stop_event.is_set():
+                        self.batch_queue.put(batch)
+                        batches_created += 1
+
+            print(f"Epoch {epoch + 1} complete: {samples_loaded} samples loaded, {samples_skipped} skipped, {batches_created} batches created")
             epoch += 1
 
             # Signal that we've completed a full pass through the dataset
@@ -164,16 +382,16 @@ class FullDatasetLoader:
         return self
 
     def __next__(self):
-        """Get the next sample from the queue."""
+        """Get the next batch from the queue."""
         try:
-            sample = self.sample_queue.get(timeout=30)  # 30 second timeout
-            return sample['src'], sample['src_mask'], sample['tgt']
+            batch = self.batch_queue.get(timeout=30)  # 30 second timeout
+            return (batch['src'], batch['src_mask'], batch['tgt'],
+                   batch['bucket_len'], batch['batch_size'], batch['actual_tokens'])
         except queue.Empty:
             if self.stop_event.is_set():
                 raise StopIteration
             else:
-                # This shouldn't happen unless there's an issue with the loader
-                print("Warning: Queue empty but loader should be running")
+                print("Warning: Batch queue empty but loader should be running")
                 raise StopIteration
 
     def stop(self):
@@ -184,23 +402,8 @@ class FullDatasetLoader:
 
     def get_queue_size(self):
         """Get current queue size for monitoring."""
-        return self.sample_queue.qsize()
+        return self.batch_queue.qsize()
 
-
-
-def collect_batch(data_iter, batch_size):
-    """Collect multiple samples from data iterator and concatenate into a batch."""
-    batch_src, batch_mask, batch_tgt = [], [], []
-
-    for _ in range(batch_size):
-        src, src_mask, tgt = next(data_iter)
-        batch_src.append(src)
-        batch_mask.append(src_mask)
-        batch_tgt.append(tgt)
-
-    return (torch.cat(batch_src, dim=0),
-            torch.cat(batch_mask, dim=0),
-            torch.cat(batch_tgt, dim=0))
 
 def count_tokens_in_batch(src, tgt, pad_token_id):
     """Count non-padding tokens in source and target tensors."""
@@ -226,26 +429,38 @@ def format_token_rates(total_tokens, elapsed_time):
     }
 
 @timeit
-def train():  # Add configurable batch size parameter
+def train():
     sp_model_path = f'{ROOTDIR}/misc/superopt.model'
     data_dir = f"{HOMEDIR}/superopt_data/"
 
-    # Choose loading strategy
-    use_full_async = True  # True for queue-based, False for buffered
+    # Create fixed bucket weighted random collector
+    batch_collector = FixedBucketRandomCollector(
+        batch_sizes_dict=BATCH_SIZES,
+        max_enc_len=ENC_SEQ_LEN,
+        max_dec_len=DEC_SEQ_LEN
+    )
 
-    if ENC_SEQ_LEN == 8192 - 1024:
-        prefetch_buffer = 256
-    elif ENC_SEQ_LEN == 4096:
-        prefetch_buffer = 1024
-    elif ENC_SEQ_LEN == 2048:
-        prefetch_buffer = 8192
-    elif ENC_SEQ_LEN == 1024:
-        prefetch_buffer = 32768
+    # Calculate prefetch buffer based on batch sizes
+    base_prefetch_buffer = 4  # Base buffer size for theoretical batch size of 1
+    max_batch_size = max(BATCH_SIZES.values())
+    prefetch_buffer = base_prefetch_buffer * max_batch_size
+
+    print(f"Prefetch buffer calculation:")
+    print(f"  Base prefetch buffer: {base_prefetch_buffer}")
+    print(f"  Max batch size: {max_batch_size}")
+    print(f"  Calculated prefetch buffer: {prefetch_buffer}")
+
+    # Show prefetch buffer for each bucket type
+    print(f"  Per-bucket effective capacity:")
+    for bucket_len, batch_size in sorted(BATCH_SIZES.items()):
+        effective_samples = prefetch_buffer * batch_size
+        print(f"    {bucket_len:4d} tokens: {prefetch_buffer} batches × {batch_size} samples = {effective_samples:,} samples")
 
     data_loader = FullDatasetLoader(
         data_dir,
         sp_model_path,
-        prefetch_buffer=prefetch_buffer,  # How many samples to keep in queue
+        batch_collector,
+        prefetch_buffer=prefetch_buffer,
         num_workers=16
     )
 
@@ -257,10 +472,7 @@ def train():  # Add configurable batch size parameter
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=100)
     model, optim, loss = load_checkpoint(model, optim)
 
-    # Prime the iterator
-    next(data_iter)
-
-    print(f"Starting training with batch size {BATCH_SIZE} and full dataset async loading...")
+    print(f"Starting training with fixed bucket weighted random selection (buckets: {batch_collector.bucket_lengths})")
 
     # Start timing and iteration counting
     import time
@@ -268,40 +480,27 @@ def train():  # Add configurable batch size parameter
     iteration_count = 0
     total_tokens_processed = 0
     losses = []
-
-    # Helper function to safely collect batch with iterator restart handling
-    def safe_collect_batch(data_iter, BATCH_SIZE):
-        batch_src, batch_mask, batch_tgt = [], [], []
-
-        for _ in range(BATCH_SIZE):
-            try:
-                src, src_mask, tgt = next(data_iter)
-                batch_src.append(src)
-                batch_mask.append(src_mask)
-                batch_tgt.append(tgt)
-            except StopIteration:
-                # Handle iterator exhaustion - restart and continue collecting
-                print("Data iterator exhausted during batch collection, restarting...")
-                data_iter = iter(data_loader)
-                src, src_mask, tgt = next(data_iter)
-                batch_src.append(src)
-                batch_mask.append(src_mask)
-                batch_tgt.append(tgt)
-
-        return (torch.cat(batch_src, dim=0),
-                torch.cat(batch_mask, dim=0),
-                torch.cat(batch_tgt, dim=0)), data_iter
+    bucket_usage_stats = defaultdict(int)
+    bucket_training_counts = defaultdict(int)  # Track how many batches trained per bucket
+    batch_size_stats = defaultdict(int)
 
     for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='\ntraining'):
         model.train()
 
-        for __ in range(GRADIENT_ACCUMULATE_EVERY):
-            # Collect a batch of samples
-            (src, src_mask, tgt), data_iter = safe_collect_batch(data_iter, BATCH_SIZE)
+        # Reference batch size for gradient normalization
+        reference_batch_size = 4
 
-            # Count tokens in this batch (before moving to GPU)
-            batch_tokens = count_tokens_in_batch(src, tgt, tkn('PAD'))
-            total_tokens_processed += batch_tokens
+        for __ in range(GRADIENT_ACCUMULATE_EVERY):
+            # Get next batch (weighted random selection from ready buckets)
+            src, src_mask, tgt, bucket_len, current_batch_size, actual_tokens = next(data_iter)
+
+            # Track statistics
+            bucket_usage_stats[bucket_len] += 1
+            bucket_training_counts[bucket_len] += 1  # Track training counts
+            batch_size_stats[current_batch_size] += 1
+
+            # Use actual token count (pre-padding)
+            total_tokens_processed += actual_tokens
 
             # Move to GPU
             src = src.to('cuda', non_blocking=True)
@@ -309,41 +508,68 @@ def train():  # Add configurable batch size parameter
             tgt = tgt.to('cuda', non_blocking=True)
 
             loss = model(src, tgt, mask=src_mask)
-            (loss / (GRADIENT_ACCUMULATE_EVERY)).backward()
+
+            # Scale by current batch size to normalize gradient magnitude
+            gradient_scale = reference_batch_size / (current_batch_size * GRADIENT_ACCUMULATE_EVERY)
+            (loss * gradient_scale).backward()
 
             iteration_count += 1
 
-        # Calculate and report iterations per second
+
+        # Calculate and report rates
         elapsed_time = time.time() - start_time
         iterations_per_sec = iteration_count / elapsed_time
         token_rates = format_token_rates(total_tokens_processed, elapsed_time)
+
         print(f'\nTokens: {total_tokens_processed:,} total | {token_rates["per_sec"]} tok/s | {token_rates["per_min"]} tok/min | {token_rates["per_hour"]} tok/hr | {token_rates["per_day"]} tok/day')
-        print(f'\n{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s | batch_size: {BATCH_SIZE}')
+        print(f'{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s | bucket: {bucket_len} | batch_size: {current_batch_size}')
         losses.append(loss.item())
         print(f"avg loss {sum(losses) / (i+1)}")
 
-        # Optional: print queue size for monitoring
-        if use_full_async and i % 100 == 0:
+        # Print statistics every 200 iterations
+        if i % 200 == 0 and i > 0:
             print(f"  Queue size: {data_loader.get_queue_size()}")
+
+            print("  Bucket usage distribution:")
+            total_bucket_uses = sum(bucket_usage_stats.values())
+            for bucket_len in sorted(bucket_usage_stats.keys()):
+                count = bucket_usage_stats[bucket_len]
+                percentage = (count / total_bucket_uses) * 100
+                print(f"    {bucket_len:4d} tokens: {count:4d} batches ({percentage:5.1f}%)")
+
+            print("  Bucket training counts (total batches trained with weighted random selection):")
+            total_trained = sum(bucket_training_counts.values())
+            for bucket_len in sorted(batch_collector.bucket_lengths):
+                count = bucket_training_counts.get(bucket_len, 0)
+                percentage = (count / total_trained) * 100 if total_trained > 0 else 0
+                target_batch_size = batch_collector.bucket_batch_sizes[bucket_len]
+                total_samples_trained = count * target_batch_size
+                print(f"    {bucket_len:4d} tokens: {count:4d} batches ({percentage:5.1f}%) = {total_samples_trained:,} samples")
+
+            print("  Batch size distribution:")
+            total_batches = sum(batch_size_stats.values())
+            for batch_size in sorted(batch_size_stats.keys()):
+                count = batch_size_stats[batch_size]
+                percentage = (count / total_batches) * 100
+                print(f"    batch_size={batch_size:2d}: {count:4d} batches ({percentage:5.1f}%)")
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
         optim.step()
         scheduler.step(i/NUM_BATCHES)
         optim.zero_grad()
+        report_cuda_size()
 
-        if i % CHECKPOINT_EVERY == 0:
-            report_cuda_size()
-            if i > 0:
-                save_checkpoint(model, optim, loss)
+        if i % CHECKPOINT_EVERY == 0 and i > 0:
+            save_checkpoint(model, optim, loss)
 
-        if i % GENERATE_EVERY == 0:
+        if i % GENERATE_EVERY == 0 and i > 0:
             model.eval()
-            # Get a sample for generation (just use first sample from a batch)
-            (src, src_mask, tgt), data_iter = safe_collect_batch(data_iter, 1)
-            src = src.to('cuda', non_blocking=True)
-            src_mask = src_mask.to('cuda', non_blocking=True)
-            tgt = tgt.to('cuda', non_blocking=True)
+            # Get a sample for generation
+            src, src_mask, tgt, _, _, _ = next(data_iter)
+            src = src[:1].to('cuda', non_blocking=True)  # Take first sample
+            src_mask = src_mask[:1].to('cuda', non_blocking=True)
+            tgt = tgt[:1].to('cuda', non_blocking=True)
 
             start_tokens = torch.tensor([tkn('DECSTART')]).to('cuda')
             sample = model.generate(src, start_tokens, DEC_SEQ_LEN, eos_token=tkn('EOS'), mask=src_mask)
@@ -356,8 +582,7 @@ def train():  # Add configurable batch size parameter
             print(print_stmt)
 
     # Clean up
-    if use_full_async:
-        data_loader.stop()
+    data_loader.stop()
 
 
 def main():
