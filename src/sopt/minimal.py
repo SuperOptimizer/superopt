@@ -554,7 +554,7 @@ def train():
     )
 
     data_iter = iter(data_loader)
-
+    next(data_iter)
     model = get_model(tkn('PAD'))
 
     # Replace report_model_size(model) with token-aware version

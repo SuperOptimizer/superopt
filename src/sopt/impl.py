@@ -17,8 +17,8 @@ NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
 GENERATE_EVERY = 100
-CHECKPOINT_EVERY = 100
-PRINT_STATS_EVERY = 100
+CHECKPOINT_EVERY = 10
+PRINT_STATS_EVERY = 10
 
 if '4060' in torch.cuda.get_device_name():
   MODEL_SIZE = 'small'
@@ -33,11 +33,11 @@ elif 'H100' in torch.cuda.get_device_name():
                  7168: 1,
                  6144: 2,
                  5120: 3,
-                 4096: 5,
-                 3072: 10,
-                 2048: 18,
+                 4096: 4,
+                 3072: 6,
+                 2048: 12,
                  1024: 40,
-                 512:  80}
+                 512:  120}
 
 
 
@@ -80,7 +80,7 @@ def get_model(pad_value):
   )
   model = model.cuda()
   model = model.bfloat16()
-  model = torch.compile(model,dynamic=True)
+  model = torch.compile(model, ) #dynamic=True
   return model
 
 # our tokenization scheme is
