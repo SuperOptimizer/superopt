@@ -10,17 +10,102 @@ from concurrent.futures import ThreadPoolExecutor
 import random
 from collections import defaultdict
 import math
+import numpy as np
 
 from torchao.optim import _AdamW, AdamW4bit
 from torchao.optim import CPUOffloadOptimizer
 
 from impl import (
   get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
-   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, GRADIENT_ACCUMULATE_EVERY, HOMEDIR, BATCH_SIZES)
-from util import report_cuda_size, timeit, report_model_size, chunkify
+   GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, HOMEDIR, BATCH_SIZES)
+from util import report_cuda_size, timeit, chunkify
 from codegen import gen_yarpgen
 
 CHECKPOINT = f'/{ROOTDIR}/checkpoint-{torch.cuda.get_device_name()}-{MODEL_SIZE}.pt'
+
+def calculate_target_tokens_per_update(num_parameters):
+    """
+    Simple scaling: 4K tokens per 1M parameters
+
+    Args:
+        num_parameters: Total number of trainable parameters
+
+    Returns:
+        target_tokens_per_update: Tokens to accumulate before optimizer step
+    """
+    params_M = num_parameters / 1_000_000
+    target_tokens = int(params_M * 4000)
+
+    # Apply reasonable bounds
+    min_tokens = 16_000    # Minimum for stability
+    max_tokens = 4_000_000 # Maximum for memory
+
+    return max(min_tokens, min(max_tokens, target_tokens))
+
+def report_model_size_with_tokens(model):
+    """Enhanced version that calculates target token accumulation"""
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+
+    target_tokens = calculate_target_tokens_per_update(params)
+
+    print(f"Model: {params // 1_000_000}M parameters ({params:,} total)")
+    print(f"Target tokens per update: {target_tokens:,} (4K per 1M params)")
+
+    return params, target_tokens
+
+def token_based_training_step(model, data_iter, optimizer, target_tokens_per_update,
+                            bucket_usage_stats, bucket_training_counts, batch_size_stats):
+    """
+    Single training step using token-based gradient accumulation
+    """
+    model.train()
+    optimizer.zero_grad()
+
+    accumulated_tokens = 0
+    accumulated_loss = 0
+    num_micro_batches = 0
+    total_actual_tokens = 0
+
+    while accumulated_tokens < target_tokens_per_update:
+        try:
+            src, src_mask, tgt, bucket_len, current_batch_size, actual_tokens = next(data_iter)
+
+            # Track statistics
+            bucket_usage_stats[bucket_len] += 1
+            bucket_training_counts[bucket_len] += 1
+            batch_size_stats[current_batch_size] += 1
+
+            # Move to GPU
+            src = src.to('cuda', non_blocking=True)
+            src_mask = src_mask.to('cuda', non_blocking=True)
+            tgt = tgt.to('cuda', non_blocking=True)
+
+            # Forward pass
+            loss = model(src, tgt, mask=src_mask)
+
+            # Weight by token contribution - this replaces reference_batch_size scaling
+            token_weight = actual_tokens / target_tokens_per_update
+            weighted_loss = loss * token_weight
+
+            # Backward pass
+            weighted_loss.backward()
+
+            # Track metrics
+            accumulated_tokens += actual_tokens
+            accumulated_loss += loss.item() * token_weight
+            total_actual_tokens += actual_tokens
+            num_micro_batches += 1
+
+        except StopIteration:
+            # End of data - step with what we have
+            break
+
+    # Gradient clipping and optimizer step
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    optimizer.step()
+
+    return accumulated_loss, accumulated_tokens, num_micro_batches, total_actual_tokens
 
 def save_checkpoint(model, optim, loss):
     print("saving", CHECKPOINT)
@@ -181,9 +266,9 @@ class FixedBucketRandomCollector:
             batch_tgt.append(tgt)
 
         return {
-            'src': torch.tensor(batch_src).long(),
-            'src_mask': torch.tensor(batch_src_mask).bool(),
-            'tgt': torch.tensor(batch_tgt).long(),
+            'src': torch.tensor(batch_src).long().pin_memory(),
+            'src_mask': torch.tensor(batch_src_mask).bool().pin_memory(),
+            'tgt': torch.tensor(batch_tgt).long().pin_memory(),
             'bucket_len': bucket_len,
             'batch_size': len(batch_src),
             'actual_tokens': total_actual_tokens  # Actual tokens before padding
@@ -467,12 +552,17 @@ def train():
     data_iter = iter(data_loader)
 
     model = get_model(tkn('PAD'))
-    report_model_size(model)
+
+    # Replace report_model_size(model) with token-aware version
+    params, target_tokens_per_update = report_model_size_with_tokens(model)
+
     optim = _AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=100)
     model, optim, loss = load_checkpoint(model, optim)
 
-    print(f"Starting training with fixed bucket weighted random selection (buckets: {batch_collector.bucket_lengths})")
+    print(f"Starting training with token-based gradient accumulation")
+    print(f"  Buckets: {batch_collector.bucket_lengths}")
+    print(f"  Target tokens per update: {target_tokens_per_update:,}")
 
     # Start timing and iteration counting
     import time
@@ -485,36 +575,16 @@ def train():
     batch_size_stats = defaultdict(int)
 
     for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='\ntraining'):
-        model.train()
 
-        # Reference batch size for gradient normalization
-        reference_batch_size = 4
+        # NEW: Token-based training step
+        loss, tokens_in_step, micro_batches, actual_tokens = token_based_training_step(
+            model, data_iter, optim, target_tokens_per_update,
+            bucket_usage_stats, bucket_training_counts, batch_size_stats
+        )
 
-        for __ in range(GRADIENT_ACCUMULATE_EVERY):
-            # Get next batch (weighted random selection from ready buckets)
-            src, src_mask, tgt, bucket_len, current_batch_size, actual_tokens = next(data_iter)
-
-            # Track statistics
-            bucket_usage_stats[bucket_len] += 1
-            bucket_training_counts[bucket_len] += 1  # Track training counts
-            batch_size_stats[current_batch_size] += 1
-
-            # Use actual token count (pre-padding)
-            total_tokens_processed += actual_tokens
-
-            # Move to GPU
-            src = src.to('cuda', non_blocking=True)
-            src_mask = src_mask.to('cuda', non_blocking=True)
-            tgt = tgt.to('cuda', non_blocking=True)
-
-            loss = model(src, tgt, mask=src_mask)
-
-            # Scale by current batch size to normalize gradient magnitude
-            gradient_scale = reference_batch_size / (current_batch_size * GRADIENT_ACCUMULATE_EVERY)
-            (loss * gradient_scale).backward()
-
-            iteration_count += 1
-
+        # Update tracking
+        total_tokens_processed += actual_tokens
+        iteration_count += micro_batches
 
         # Calculate and report rates
         elapsed_time = time.time() - start_time
@@ -522,42 +592,41 @@ def train():
         token_rates = format_token_rates(total_tokens_processed, elapsed_time)
 
         print(f'\nTokens: {total_tokens_processed:,} total | {token_rates["per_sec"]} tok/s | {token_rates["per_min"]} tok/min | {token_rates["per_hour"]} tok/hr | {token_rates["per_day"]} tok/day')
-        print(f'{i}: {loss.item():.4f} | {iterations_per_sec:.2f} iter/s | bucket: {bucket_len} | batch_size: {current_batch_size}')
-        losses.append(loss.item())
-        print(f"avg loss {sum(losses) / (i+1)}")
+        print(f'{i}: loss={loss:.4f} | {iterations_per_sec:.2f} iter/s | micro_batches={micro_batches} | step_tokens={tokens_in_step:,}')
+        losses.append(loss)
+        print(f"avg loss {sum(losses) / (i+1):.4f}")
 
-        # Print statistics every 200 iterations
-        if i % 200 == 0 and i > 0:
+        # Print statistics every 10 iterations
+        if i % 10 == 0 and i > 0:
             print(f"  Queue size: {data_loader.get_queue_size()}")
 
             print("  Bucket usage distribution:")
             total_bucket_uses = sum(bucket_usage_stats.values())
-            for bucket_len in sorted(bucket_usage_stats.keys()):
-                count = bucket_usage_stats[bucket_len]
-                percentage = (count / total_bucket_uses) * 100
-                print(f"    {bucket_len:4d} tokens: {count:4d} batches ({percentage:5.1f}%)")
+            if total_bucket_uses > 0:
+                for bucket_len in sorted(bucket_usage_stats.keys()):
+                    count = bucket_usage_stats[bucket_len]
+                    percentage = (count / total_bucket_uses) * 100
+                    print(f"    {bucket_len:4d} tokens: {count:4d} batches ({percentage:5.1f}%)")
 
-            print("  Bucket training counts (total batches trained with weighted random selection):")
+            print("  Bucket training counts (total batches trained with token-based accumulation):")
             total_trained = sum(bucket_training_counts.values())
-            for bucket_len in sorted(batch_collector.bucket_lengths):
-                count = bucket_training_counts.get(bucket_len, 0)
-                percentage = (count / total_trained) * 100 if total_trained > 0 else 0
-                target_batch_size = batch_collector.bucket_batch_sizes[bucket_len]
-                total_samples_trained = count * target_batch_size
-                print(f"    {bucket_len:4d} tokens: {count:4d} batches ({percentage:5.1f}%) = {total_samples_trained:,} samples")
+            if total_trained > 0:
+                for bucket_len in sorted(batch_collector.bucket_lengths):
+                    count = bucket_training_counts.get(bucket_len, 0)
+                    percentage = (count / total_trained) * 100 if total_trained > 0 else 0
+                    target_batch_size = batch_collector.bucket_batch_sizes[bucket_len]
+                    total_samples_trained = count * target_batch_size
+                    print(f"    {bucket_len:4d} tokens: {count:4d} batches ({percentage:5.1f}%) = {total_samples_trained:,} samples")
 
             print("  Batch size distribution:")
             total_batches = sum(batch_size_stats.values())
-            for batch_size in sorted(batch_size_stats.keys()):
-                count = batch_size_stats[batch_size]
-                percentage = (count / total_batches) * 100
-                print(f"    batch_size={batch_size:2d}: {count:4d} batches ({percentage:5.1f}%)")
+            if total_batches > 0:
+                for batch_size in sorted(batch_size_stats.keys()):
+                    count = batch_size_stats[batch_size]
+                    percentage = (count / total_batches) * 100
+                    print(f"    batch_size={batch_size:2d}: {count:4d} batches ({percentage:5.1f}%)")
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        optim.step()
         scheduler.step(i/NUM_BATCHES)
-        optim.zero_grad()
         report_cuda_size()
 
         if i % CHECKPOINT_EVERY == 0 and i > 0:
