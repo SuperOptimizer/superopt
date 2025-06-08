@@ -16,9 +16,9 @@ NUM_VOCAB_TOKENS = NUM_TOKENS - NUM_SPECIAL_TOKENS
 
 LEARNING_RATE = 1e-4
 NUM_BATCHES = int(1e7)
-GENERATE_EVERY = 1000
-CHECKPOINT_EVERY = 1000
-PRINT_STATS_EVERY = 1000
+GENERATE_EVERY = 100
+CHECKPOINT_EVERY = 100
+PRINT_STATS_EVERY = 100
 
 if '4060' in torch.cuda.get_device_name():
   MODEL_SIZE = 'small'
@@ -29,7 +29,15 @@ elif '4090' in torch.cuda.get_device_name():
 elif 'H100' in torch.cuda.get_device_name():
   MODEL_SIZE = 'large'
   ENC_SEQ_LEN = DEC_SEQ_LEN = 8192
-  BATCH_SIZES = {8192-2048: 2, 4096: 4, 2048: 16, 1024: 32}
+  BATCH_SIZES = {8192: 1,
+                 7168: 1,
+                 6144: 2,
+                 5120: 3,
+                 4096: 5,
+                 3072: 10,
+                 2048: 18,
+                 1024: 40,
+                 512:  80}
 
 
 

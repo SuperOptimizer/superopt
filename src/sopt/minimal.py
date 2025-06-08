@@ -18,6 +18,7 @@ from torchao.optim import CPUOffloadOptimizer
 from impl import (
   get_model, tokenize_bytes, detokenize_bytes, tokenize_hexstr, detokenize_hexstr, tkn, MODEL_SIZE,
    GENERATE_EVERY, ROOTDIR, ENC_SEQ_LEN, DEC_SEQ_LEN, LEARNING_RATE, NUM_BATCHES, TMP, CHECKPOINT_EVERY, HOMEDIR, BATCH_SIZES)
+from src.sopt.impl import PRINT_STATS_EVERY
 from util import report_cuda_size, timeit, chunkify
 from codegen import gen_yarpgen
 
@@ -526,7 +527,10 @@ def train():
     )
 
     # Calculate prefetch buffer based on batch sizes
-    base_prefetch_buffer = 4  # Base buffer size for theoretical batch size of 1
+    #todo: make this better. this will collect base_prefetch_buffer * the max
+    # for any, so if we batch 80 512ctx calls, then we'll store 80 8k ones, which is fine for
+    # now i guess but it could be better
+    base_prefetch_buffer = 1  # Base buffer size for theoretical batch size of 1
     max_batch_size = max(BATCH_SIZES.values())
     prefetch_buffer = base_prefetch_buffer * max_batch_size
 
@@ -596,8 +600,7 @@ def train():
         losses.append(loss)
         print(f"avg loss {sum(losses) / (i+1):.4f}")
 
-        # Print statistics every 10 iterations
-        if i % 10 == 0 and i > 0:
+        if i % PRINT_STATS_EVERY == 0 and i > 0:
             print(f"  Queue size: {data_loader.get_queue_size()}")
 
             print("  Bucket usage distribution:")
