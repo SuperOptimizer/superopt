@@ -171,23 +171,7 @@ class FixedBucketRandomCollector:
 
         # Skip sample if it doesn't fit in any bucket
         if bucket_len is None:
-            # Optionally log skipped samples (but not too frequently to avoid spam)
-            if not hasattr(self, '_skip_count'):
-                self._skip_count = 0
-            self._skip_count += 1
-
-            if self._skip_count <= 10 or self._skip_count % 1000 == 0:
-                print(f"Skipping sample {self._skip_count}: src_len={src_actual_len}, tgt_len={tgt_actual_len}, max_len={max_actual_len} (exceeds largest bucket {max(self.bucket_lengths)})")
-
             return None
-
-        # Debug: Print first few samples to verify bucketing logic
-        if not hasattr(self, '_debug_count'):
-            self._debug_count = 0
-
-        if self._debug_count < 5:  # Show first 5 samples
-            print(f"Sample {self._debug_count + 1}: src_len={src_actual_len}, tgt_len={tgt_actual_len}, max_len={max_actual_len} → bucket={bucket_len}")
-            self._debug_count += 1
 
         sample = {
             'src': src_tokens,
@@ -559,7 +543,6 @@ def train():
     params, target_tokens_per_update = report_model_size_with_tokens(model)
 
     optim = _AdamW(model.parameters(), lr=LEARNING_RATE, bf16_stochastic_round=True)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=100)
     model, optim = load_checkpoint(model, optim)
 
     print(f"Starting training with token-based gradient accumulation")
@@ -627,7 +610,6 @@ def train():
                     percentage = (count / total_batches) * 100
                     print(f"    batch_size={batch_size:2d}: {count:4d} batches ({percentage:5.1f}%)")
 
-        scheduler.step(i/NUM_BATCHES)
         report_cuda_size()
 
         if i % CHECKPOINT_EVERY == 0 and i > 0:
