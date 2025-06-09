@@ -270,7 +270,6 @@ class FullDatasetLoader:
         self.loader_thread.start()
 
     def _get_corpus_archives(self):
-        """Get all corpus_*.tar.gz files."""
         all_files = os.listdir(self.data_dir)
         corpus_files = [f for f in all_files if f.startswith('corpus_') and f.endswith('.tar.gz')]
 
@@ -279,12 +278,11 @@ class FullDatasetLoader:
             corpus_path = os.path.join(self.data_dir, corpus_file)
             corpus_paths.append(corpus_path)
 
-        # Sort by corpus number for deterministic ordering
         corpus_paths.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
         return corpus_paths
 
     def _process_sample(self, enc_bytes, dec_bytes):
-        # Convert binary data to byte tokens (each byte becomes a token 0-255)
+        #print(len(enc_bytes), len(dec_bytes))
         unopt_tokens = bytewise_tokenize(enc_bytes)
         opt_tokens = bytewise_tokenize(dec_bytes)
 
@@ -531,7 +529,7 @@ def train():
         report_cuda_size()
 
         if i % CHECKPOINT_EVERY == 0 and i > 0:
-            save_checkpoint(model, optim, loss)
+            save_checkpoint(model, optim)
 
         if i % GENERATE_EVERY == 0 and i > 0:
             model.eval()

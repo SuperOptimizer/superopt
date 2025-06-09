@@ -18,7 +18,7 @@ LEARNING_RATE = 5e-4
 NUM_BATCHES = int(1e7)
 GENERATE_EVERY = 1000
 CHECKPOINT_EVERY = 100
-PRINT_STATS_EVERY = 100
+PRINT_STATS_EVERY = 2
 
 if '4060' in torch.cuda.get_device_name():
   MODEL_SIZE = 'small'
@@ -27,20 +27,15 @@ elif '4090' in torch.cuda.get_device_name():
   MODEL_SIZE = 'medium'
   ENC_SEQ_LEN = DEC_SEQ_LEN = 4096
 elif 'H100' in torch.cuda.get_device_name():
-  MODEL_SIZE = 'large'
-  ENC_SEQ_LEN = DEC_SEQ_LEN = 8192
+  MODEL_SIZE = 'small'
+  ENC_SEQ_LEN = DEC_SEQ_LEN = 32768
   BATCH_SIZES = {
-    8192+2048: 1,
-    8192+1024: 1,
-    8192: 1,
-    7168: 1,
-    6144: 1,
-    5120: 2,
-    4096: 3,
-    3072: 4,
-    2048: 8,
-    1024: 32,
-    512:  96
+    32768: 1,
+    16384: 2,
+    8192: 7,
+    4096: 8*3,
+    2048: 8*3*4,
+    1024: 8*3*3*4,
   }
 
 
